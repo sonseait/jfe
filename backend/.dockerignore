@@ -1,0 +1,9 @@
+bin
+cache
+media
+*.log
+.env*
+!.env.example
+
+imports
+.venv-audio

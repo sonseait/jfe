@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: true
+  # Vitest pulls in MSW; this app does not install a browser mock worker.
+  msw: false

@@ -228,10 +228,25 @@ type WorkersDTO struct {
 	Items []WorkerDTO `json:"items"`
 }
 type EncodingDTO struct {
-	Mode          string `json:"mode" jsonschema:"enum=disabled,enum=nvidia"`
-	CQ            int    `json:"cq" jsonschema:"minimum=0,maximum=51"`
-	Device        int    `json:"device" jsonschema:"minimum=0,maximum=31"`
-	MaxConcurrent int    `json:"maxConcurrent" jsonschema:"minimum=1,maximum=16"`
+	Mode                      string `json:"mode" jsonschema:"enum=disabled,enum=nvidia"`
+	CQ                        int    `json:"cq" jsonschema:"minimum=0,maximum=51"`
+	Device                    int    `json:"device" jsonschema:"minimum=0,maximum=31"`
+	MaxConcurrent             int    `json:"maxConcurrent" jsonschema:"minimum=1,maximum=16"`
+	Preset                    string `json:"preset" jsonschema:"enum=p1,enum=p2,enum=p3,enum=p4,enum=p5,enum=p6,enum=p7"`
+	VideoCodec                string `json:"videoCodec" jsonschema:"enum=h264,enum=hevc"`
+	Bitrate720                int    `json:"bitrate720" jsonschema:"minimum=100000,maximum=100000000"`
+	Bitrate1080               int    `json:"bitrate1080" jsonschema:"minimum=100000,maximum=100000000"`
+	Bitrate2160               int    `json:"bitrate2160" jsonschema:"minimum=100000,maximum=100000000"`
+	AudioCodec                string `json:"audioCodec" jsonschema:"enum=aac,enum=ac3"`
+	AudioBitrate              int    `json:"audioBitrate" jsonschema:"minimum=64000,maximum=1024000"`
+	SubtitleSize              int    `json:"subtitleSize" jsonschema:"minimum=12,maximum=72"`
+	SubtitleOutline           int    `json:"subtitleOutline" jsonschema:"minimum=0,maximum=10"`
+	SubtitleMargin            int    `json:"subtitleMargin" jsonschema:"minimum=0,maximum=200"`
+	SubtitleFont              string `json:"subtitleFont" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Sans CJK"`
+	SubtitleColor             string `json:"subtitleColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+	SubtitleBackground        string `json:"subtitleBackground" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+	SubtitleBackgroundOpacity int    `json:"subtitleBackgroundOpacity" jsonschema:"minimum=0,maximum=100"`
+	SubtitleBorderColor       string `json:"subtitleBorderColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
 }
 type PlaybackRequest struct {
 	ForceTranscode bool    `json:"forceTranscode,omitempty"`

@@ -7976,6 +7976,33 @@
       "EncodingDTO": {
         "additionalProperties": false,
         "properties": {
+          "audioBitrate": {
+            "maximum": 1024000,
+            "minimum": 64000,
+            "type": "integer"
+          },
+          "audioCodec": {
+            "enum": [
+              "aac",
+              "ac3"
+            ],
+            "type": "string"
+          },
+          "bitrate1080": {
+            "maximum": 100000000,
+            "minimum": 100000,
+            "type": "integer"
+          },
+          "bitrate2160": {
+            "maximum": 100000000,
+            "minimum": 100000,
+            "type": "integer"
+          },
+          "bitrate720": {
+            "maximum": 100000000,
+            "minimum": 100000,
+            "type": "integer"
+          },
           "cq": {
             "maximum": 51,
             "minimum": 0,
@@ -7997,13 +8024,87 @@
               "nvidia"
             ],
             "type": "string"
+          },
+          "preset": {
+            "enum": [
+              "p1",
+              "p2",
+              "p3",
+              "p4",
+              "p5",
+              "p6",
+              "p7"
+            ],
+            "type": "string"
+          },
+          "subtitleBackground": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "type": "string"
+          },
+          "subtitleBackgroundOpacity": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subtitleBorderColor": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "type": "string"
+          },
+          "subtitleColor": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "type": "string"
+          },
+          "subtitleFont": {
+            "enum": [
+              "Arial",
+              "Noto Sans",
+              "Noto Sans CJK"
+            ],
+            "type": "string"
+          },
+          "subtitleMargin": {
+            "maximum": 200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subtitleOutline": {
+            "maximum": 10,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subtitleSize": {
+            "maximum": 72,
+            "minimum": 12,
+            "type": "integer"
+          },
+          "videoCodec": {
+            "enum": [
+              "h264",
+              "hevc"
+            ],
+            "type": "string"
           }
         },
         "required": [
           "mode",
           "cq",
           "device",
-          "maxConcurrent"
+          "maxConcurrent",
+          "preset",
+          "videoCodec",
+          "bitrate720",
+          "bitrate1080",
+          "bitrate2160",
+          "audioCodec",
+          "audioBitrate",
+          "subtitleSize",
+          "subtitleOutline",
+          "subtitleMargin",
+          "subtitleFont",
+          "subtitleColor",
+          "subtitleBackground",
+          "subtitleBackgroundOpacity",
+          "subtitleBorderColor"
         ],
         "type": "object"
       },

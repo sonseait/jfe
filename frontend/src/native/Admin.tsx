@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Checkbox,
+  ColorInput,
   Group,
   Modal,
   MultiSelect,
@@ -13,6 +14,7 @@ import {
   PasswordInput,
   Progress,
   Select,
+  Slider,
   Stack,
   TagsInput,
   Tabs,
@@ -22,6 +24,7 @@ import {
 import {
   ArrowUpRight,
   Clock,
+  Captions,
   Cpu,
   Film,
   Music2,
@@ -57,6 +60,7 @@ export default function Admin() {
             [FolderCog, 'libraries', 'manage.librarySettings'],
             [Users, 'users', 'users'],
             [Cpu, 'encoding', 'manage.transcoding'],
+            [Captions, 'subtitles', 'subtitleRender.title'],
             [Clock, 'jobs', 'manage.tasks'],
           ].map(([Icon, id, label]) => {
             const Symbol = Icon as typeof Users;
@@ -77,6 +81,8 @@ export default function Admin() {
             <UsersPanel />
           ) : tab === 'encoding' ? (
             <Encoding />
+          ) : tab === 'subtitles' ? (
+            <SubtitleRendering />
           ) : tab === 'jobs' ? (
             <Jobs />
           ) : (
@@ -806,15 +812,16 @@ function EncodingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
             setValue((s) => ({ ...s, mode: v === 'nvidia' ? 'nvidia' : 'disabled' }))
           }
         />
-        <NumberInput
-          required
-          disabled={value.mode !== 'nvidia'}
-          label={t('native.nvencCQ')}
-          min={0}
-          max={51}
-          value={value.cq}
-          onChange={(v) => setValue((s) => ({ ...s, cq: Number(v) }))}
-        />
+        <label>
+          {t('native.nvencCQ')} · {value.cq}
+          <Slider
+            min={0}
+            max={51}
+            disabled={value.mode !== 'nvidia'}
+            value={value.cq}
+            onChange={(cq) => setValue((s) => ({ ...s, cq }))}
+          />
+        </label>
         <NumberInput
           required
           disabled={value.mode !== 'nvidia'}
@@ -824,18 +831,227 @@ function EncodingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
           value={value.device}
           onChange={(v) => setValue((s) => ({ ...s, device: Number(v) }))}
         />
-        <NumberInput
-          required
-          label={t('native.maxConcurrent')}
-          min={1}
-          max={16}
-          value={value.maxConcurrent}
-          onChange={(v) => setValue((s) => ({ ...s, maxConcurrent: Number(v) }))}
+        <label>
+          {t('native.maxConcurrent')} · {value.maxConcurrent}
+          <Slider
+            min={1}
+            max={16}
+            value={value.maxConcurrent}
+            onChange={(maxConcurrent) => setValue((s) => ({ ...s, maxConcurrent }))}
+          />
+        </label>
+        <h3>{t('encoding.video')}</h3>
+        <Select
+          label={t('encoding.videoCodec')}
+          disabled={value.mode !== 'nvidia'}
+          allowDeselect={false}
+          value={value.videoCodec}
+          data={[
+            { value: 'h264', label: 'H.264 (NVENC)' },
+            { value: 'hevc', label: 'HEVC / H.265 (NVENC)' },
+          ]}
+          onChange={(v) => setValue((s) => ({ ...s, videoCodec: v === 'hevc' ? 'hevc' : 'h264' }))}
+        />
+        <Select
+          label={t('encoding.preset')}
+          description={t('encoding.presetHelp')}
+          disabled={value.mode !== 'nvidia'}
+          allowDeselect={false}
+          value={value.preset}
+          data={['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'].map((preset) => ({
+            value: preset,
+            label: preset.toUpperCase(),
+          }))}
+          onChange={(v) =>
+            setValue((s) => ({
+              ...s,
+              preset: (v ?? 'p4') as DTO<'EncodingDTO'>['preset'],
+            }))
+          }
+        />
+        <BitrateProfile
+          label={t('encoding.bitrate720')}
+          value={value.bitrate720}
+          disabled={value.mode !== 'nvidia'}
+          options={[2, 4, 6]}
+          change={(bitrate720) => setValue((s) => ({ ...s, bitrate720 }))}
+        />
+        <BitrateProfile
+          label={t('encoding.bitrate1080')}
+          value={value.bitrate1080}
+          disabled={value.mode !== 'nvidia'}
+          options={[4, 8, 12]}
+          change={(bitrate1080) => setValue((s) => ({ ...s, bitrate1080 }))}
+        />
+        <BitrateProfile
+          label={t('encoding.bitrate2160')}
+          value={value.bitrate2160}
+          disabled={value.mode !== 'nvidia'}
+          options={[12, 20, 35]}
+          change={(bitrate2160) => setValue((s) => ({ ...s, bitrate2160 }))}
+        />
+        <h3>{t('encoding.audio')}</h3>
+        <Select
+          label={t('encoding.audioCodec')}
+          allowDeselect={false}
+          value={value.audioCodec}
+          data={[
+            { value: 'aac', label: 'AAC' },
+            { value: 'ac3', label: 'AC-3' },
+          ]}
+          onChange={(v) => setValue((s) => ({ ...s, audioCodec: v === 'ac3' ? 'ac3' : 'aac' }))}
+        />
+        <Select
+          label={t('encoding.audioBitrate')}
+          allowDeselect={false}
+          value={String(value.audioBitrate)}
+          data={[128, 192, 256, 384].map((kbps) => ({
+            value: String(kbps * 1000),
+            label: `${kbps} kbps`,
+          }))}
+          onChange={(audioBitrate) =>
+            setValue((s) => ({ ...s, audioBitrate: Number(audioBitrate) }))
+          }
         />
         <Button type="submit" loading={busy}>
           {t('save')}
         </Button>
       </Stack>
+    </form>
+  );
+}
+function BitrateProfile({
+  label,
+  value,
+  disabled,
+  options,
+  change,
+}: {
+  label: string;
+  value: number;
+  disabled: boolean;
+  options: number[];
+  change: (value: number) => void;
+}) {
+  return (
+    <Select
+      label={label}
+      disabled={disabled}
+      allowDeselect={false}
+      value={String(value)}
+      data={options.map((mbps) => ({ value: String(mbps * 1_000_000), label: `${mbps} Mbps` }))}
+      onChange={(next) => change(Number(next))}
+    />
+  );
+}
+function SubtitleRendering() {
+  const data = useResource('encoding', async (signal) =>
+    result(await api.GET('/api/v1/admin/encoding', { signal })),
+  );
+  return (
+    <State loading={data.isLoading} error={data.error}>
+      {data.data && <SubtitleRenderingForm initial={data.data} />}
+    </State>
+  );
+}
+function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const slider = <
+    K extends 'subtitleSize' | 'subtitleOutline' | 'subtitleMargin' | 'subtitleBackgroundOpacity',
+  >(
+    key: K,
+    label: string,
+    min: number,
+    max: number,
+  ) => (
+    <label>
+      {label} · {value[key]}
+      {key === 'subtitleBackgroundOpacity' ? '%' : ''}
+      <Slider
+        min={min}
+        max={max}
+        value={value[key]}
+        onChange={(next) => setValue((old) => ({ ...old, [key]: next }))}
+      />
+    </label>
+  );
+  return (
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        await mutate(async () => result(await api.PUT('/api/v1/admin/encoding', { body: value })));
+        setBusy(false);
+      }}
+    >
+      <fieldset className="admin-fieldset" disabled={busy}>
+        <Stack>
+          <h2>{t('subtitleRender.title')}</h2>
+          <p className="muted">{t('subtitleRender.help')}</p>
+          <Select
+            label={t('subtitleRender.font')}
+            allowDeselect={false}
+            value={value.subtitleFont}
+            data={['Arial', 'Noto Sans', 'Noto Sans CJK']}
+            onChange={(subtitleFont) =>
+              setValue((old) => ({
+                ...old,
+                subtitleFont: (subtitleFont ?? 'Arial') as DTO<'EncodingDTO'>['subtitleFont'],
+              }))
+            }
+          />
+          <ColorInput
+            label={t('subtitleRender.color')}
+            format="hex"
+            value={value.subtitleColor}
+            onChange={(subtitleColor) => setValue((old) => ({ ...old, subtitleColor }))}
+          />
+          {slider('subtitleSize', t('subtitleRender.size'), 12, 72)}
+          <ColorInput
+            label={t('subtitleRender.background')}
+            format="hex"
+            value={value.subtitleBackground}
+            onChange={(subtitleBackground) => setValue((old) => ({ ...old, subtitleBackground }))}
+          />
+          {slider('subtitleBackgroundOpacity', t('subtitleRender.backgroundOpacity'), 0, 100)}
+          <ColorInput
+            label={t('subtitleRender.borderColor')}
+            format="hex"
+            value={value.subtitleBorderColor}
+            onChange={(subtitleBorderColor) => setValue((old) => ({ ...old, subtitleBorderColor }))}
+          />
+          {slider('subtitleOutline', t('subtitleRender.borderWidth'), 0, 10)}
+          {slider('subtitleMargin', t('subtitleRender.margin'), 0, 200)}
+          <div
+            className="subtitle-render-preview"
+            style={{
+              backgroundColor: `${value.subtitleBackground}${Math.round(
+                (value.subtitleBackgroundOpacity * 255) / 100,
+              )
+                .toString(16)
+                .padStart(2, '0')}`,
+              padding: '1rem',
+              textAlign: 'center',
+            }}
+          >
+            <span
+              style={{
+                color: value.subtitleColor,
+                fontFamily: value.subtitleFont,
+                fontSize: `${Math.min(value.subtitleSize, 36)}px`,
+                WebkitTextStroke: `${value.subtitleOutline}px ${value.subtitleBorderColor}`,
+              }}
+            >
+              {t('subtitlePreview')}
+            </span>
+          </div>
+          <Button type="submit" loading={busy}>
+            {t('save')}
+          </Button>
+        </Stack>
+      </fieldset>
     </form>
   );
 }

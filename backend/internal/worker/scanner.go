@@ -358,24 +358,39 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		return nil
 	}
 	kind := "movie"
-	if i.Kind == "series" {
-		kind = "tv"
-	}
+	metadataID := payload.ProviderID
+	path := ""
 	if i.Kind == "episode" {
-		return fmt.Errorf("identify the series instead of an episode")
-	}
-	if payload.ProviderID == 0 && i.ProviderID != "" {
-		payload.ProviderID, _ = strconv.Atoi(i.ProviderID)
-	}
-	if payload.ProviderID == 0 {
-		matches, _, _, err := media.SearchMetadata(ctx, w.Config.TMDBToken, i.Title, kind, int(i.Year), general.MetadataLanguage)
+		parent, err := w.DB.GetItem(ctx, i.ParentID)
 		if err != nil {
 			return err
 		}
-		if len(matches) == 0 || !matches[0].Recommended {
-			return media.ErrNeedsIdentification
+		if parent.Kind != "series" {
+			return fmt.Errorf("episode parent is not a series")
 		}
-		payload.ProviderID = matches[0].ID
+		metadataID, _ = strconv.Atoi(parent.ProviderID)
+		if metadataID == 0 {
+			return fmt.Errorf("identify the series before its episodes")
+		}
+		path = "/tv/" + strconv.Itoa(metadataID) + "/season/" + strconv.Itoa(int(i.Season)) + "/episode/" + strconv.Itoa(int(i.Episode))
+	} else {
+		if i.Kind == "series" {
+			kind = "tv"
+		}
+		if metadataID == 0 && i.ProviderID != "" {
+			metadataID, _ = strconv.Atoi(i.ProviderID)
+		}
+		if metadataID == 0 {
+			matches, _, _, err := media.SearchMetadata(ctx, w.Config.TMDBToken, i.Title, kind, int(i.Year), general.MetadataLanguage)
+			if err != nil {
+				return err
+			}
+			if len(matches) == 0 || !matches[0].Recommended {
+				return media.ErrNeedsIdentification
+			}
+			metadataID = matches[0].ID
+		}
+		path = "/" + kind + "/" + strconv.Itoa(metadataID)
 	}
 
 	var info struct {
@@ -391,10 +406,13 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		Name     string `json:"name"`
 		Overview string `json:"overview"`
 		Poster   string `json:"poster_path"`
+		Still    string `json:"still_path"`
 		Date     string `json:"release_date"`
 		Air      string `json:"first_air_date"`
+		AirDate  string `json:"air_date"`
+		ID       int    `json:"id"`
 	}
-	if e = media.TMDB(ctx, w.Config.TMDBToken, "/"+kind+"/"+strconv.Itoa(payload.ProviderID)+"?append_to_response=credits&language="+general.MetadataLanguage, &info); e != nil {
+	if e = media.TMDB(ctx, w.Config.TMDBToken, path+"?append_to_response=credits&language="+general.MetadataLanguage, &info); e != nil {
 		return e
 	}
 	cast := []media.CastMember{}
@@ -424,12 +442,19 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		info.Title = info.Name
 		info.Date = info.Air
 	}
+	if i.Kind == "episode" {
+		info.Date = info.AirDate
+	}
 	if len(info.Date) >= 4 {
 		y, _ := strconv.Atoi(info.Date[:4])
 		i.Year = int32(y)
 	}
-	if info.Poster != "" && strings.HasPrefix(info.Poster, "/") && !strings.Contains(info.Poster, "..") {
-		req, e := http.NewRequestWithContext(ctx, "GET", "https://image.tmdb.org/t/p/w500"+info.Poster, nil)
+	artwork := info.Poster
+	if i.Kind == "episode" && info.Still != "" {
+		artwork = info.Still
+	}
+	if artwork != "" && strings.HasPrefix(artwork, "/") && !strings.Contains(artwork, "..") {
+		req, e := http.NewRequestWithContext(ctx, "GET", "https://image.tmdb.org/t/p/w500"+artwork, nil)
 		if e != nil {
 			return e
 		}
@@ -449,6 +474,27 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 			return e
 		}
 	}
-	_, e = w.DB.SaveMetadata(ctx, store.SaveMetadataParams{CastMembers: i.CastMembers, ID: i.ID, Title: info.Title, Year: i.Year, Overview: info.Overview, Poster: i.Poster, ProviderID: strconv.Itoa(payload.ProviderID), MetadataLocked: i.MetadataLocked})
-	return e
+	if info.ID == 0 {
+		info.ID = metadataID
+	}
+	_, e = w.DB.SaveMetadata(ctx, store.SaveMetadataParams{CastMembers: i.CastMembers, ID: i.ID, Title: info.Title, Year: i.Year, Overview: info.Overview, Poster: i.Poster, ProviderID: strconv.Itoa(info.ID), MetadataLocked: i.MetadataLocked})
+	if e != nil || i.Kind != "series" {
+		return e
+	}
+	episodes, e := w.DB.SeriesEpisodes(ctx, i.ID)
+	if e != nil {
+		return e
+	}
+	episodePayload, _ := json.Marshal(struct {
+		Automatic bool `json:"automatic"`
+	}{payload.Automatic})
+	for _, episode := range episodes {
+		if episode.MetadataLocked {
+			continue
+		}
+		if _, e = w.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "scanner", Kind: "metadata", ResourceID: episode.ID, Payload: episodePayload}); e != nil {
+			return e
+		}
+	}
+	return nil
 }

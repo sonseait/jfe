@@ -1195,6 +1195,46 @@ func (q *Queries) ScannedLibrary(ctx context.Context, id string) error {
 	return err
 }
 
+const seriesEpisodes = `-- name: SeriesEpisodes :many
+SELECT id, library_id, parent_id, kind, title, sort_title, year, season, episode, overview, poster, provider_id, metadata_locked, created_at, cast_members FROM items WHERE parent_id=$1 AND kind='episode' ORDER BY season,episode,sort_title,id
+`
+
+func (q *Queries) SeriesEpisodes(ctx context.Context, parentID string) ([]Item, error) {
+	rows, err := q.db.Query(ctx, seriesEpisodes, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Item{}
+	for rows.Next() {
+		var i Item
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.ParentID,
+			&i.Kind,
+			&i.Title,
+			&i.SortTitle,
+			&i.Year,
+			&i.Season,
+			&i.Episode,
+			&i.Overview,
+			&i.Poster,
+			&i.ProviderID,
+			&i.MetadataLocked,
+			&i.CreatedAt,
+			&i.CastMembers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setPlaybackReady = `-- name: SetPlaybackReady :exec
 UPDATE playback_sessions SET state='ready',updated_at=now() WHERE id=$1 AND state='preparing'
 `

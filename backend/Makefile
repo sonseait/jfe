@@ -4,7 +4,7 @@
 -include .env
 export
 
-REGISTRY ?= cr.0xh4ck3d.dev/c
+REGISTRY ?= sgp.vultrcr.com/695w
 IMAGE_NAME ?= jfe-backend
 IMAGE_TAG ?= latest
 IMAGE = $(if $(strip $(REGISTRY)),$(patsubst %/,%,$(strip $(REGISTRY)))/)$(IMAGE_NAME):$(IMAGE_TAG)

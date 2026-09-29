@@ -2,7 +2,7 @@
 .PHONY: help install dev generate typecheck lint test check build preview test-e2e format format-check docker-build docker-push
 
 OPENAPI_SOURCE ?= ../backend/openapi.json
-REGISTRY ?= cr.0xh4ck3d.dev/c
+REGISTRY ?= sgp.vultrcr.com/695w
 IMAGE_NAME ?= jfe-frontend
 IMAGE_TAG ?= latest
 IMAGE = $(if $(strip $(REGISTRY)),$(patsubst %/,%,$(strip $(REGISTRY)))/)$(IMAGE_NAME):$(IMAGE_TAG)

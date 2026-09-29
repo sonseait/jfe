@@ -197,10 +197,13 @@ func (s *Server) register() {
 			return out(EncodingDTO{}, e)
 		}
 		cfg, e := media.ParseEncoding(b)
-		return out(EncodingDTO{Mode: cfg.Mode, CQ: cfg.CQ, Device: cfg.Device, MaxConcurrent: cfg.MaxConcurrent}, e)
+		return out(EncodingDTO{Mode: cfg.Mode, CQ: cfg.CQ, Device: cfg.Device, MaxConcurrent: cfg.MaxConcurrent, Preset: cfg.Preset, VideoCodec: cfg.VideoCodec, Bitrate720: cfg.Bitrate720, Bitrate1080: cfg.Bitrate1080, Bitrate2160: cfg.Bitrate2160, AudioCodec: cfg.AudioCodec, AudioBitrate: cfg.AudioBitrate, SubtitleSize: cfg.SubtitleSize, SubtitleOutline: cfg.SubtitleOutline, SubtitleMargin: cfg.SubtitleMargin, SubtitleFont: cfg.SubtitleFont, SubtitleColor: cfg.SubtitleColor, SubtitleBackground: cfg.SubtitleBackground, SubtitleBackgroundOpacity: cfg.SubtitleBackgroundOpacity, SubtitleBorderColor: cfg.SubtitleBorderColor}, e)
 	})
 	route.Put(r, op("/admin/encoding", "saveEncoding", "admin"), func(ctx context.Context, in route.Input[EncodingDTO, route.Empty, route.Empty]) (route.Output[EncodingDTO], error) {
 		b, _ := json.Marshal(in.Body)
+		if _, e := media.ParseEncoding(b); e != nil {
+			return out(EncodingDTO{}, route.Fail(422, e.Error()))
+		}
 		return out(in.Body, s.DB.SaveSetting(ctx, store.SaveSettingParams{Key: "encoding", Value: b}))
 	})
 	s.audioRoutes()

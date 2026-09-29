@@ -55,6 +55,8 @@ INSERT INTO media_files(id,item_id,path,size,modified_at,duration,probe) VALUES(
 ON CONFLICT(item_id,path) DO UPDATE SET item_id=excluded.item_id,size=excluded.size,modified_at=excluded.modified_at,duration=excluded.duration,probe=excluded.probe,available=true;
 -- name: GetItem :one
 SELECT * FROM items WHERE id=$1;
+-- name: SeriesEpisodes :many
+SELECT * FROM items WHERE parent_id=$1 AND kind='episode' ORDER BY season,episode,sort_title,id;
 -- name: ListItems :many
 SELECT i.* FROM items i WHERE
 (sqlc.arg(is_admin)::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=sqlc.arg(user_id)::text))

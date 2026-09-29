@@ -73,6 +73,18 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	if e = json.Unmarshal(f.Probe, &probe); e != nil {
 		return PlaybackDTO{}, e
 	}
+	data, e := s.DB.GetSetting(ctx, "encoding")
+	if e != nil {
+		return PlaybackDTO{}, e
+	}
+	cfg, e := media.ParseEncoding(data)
+	if e != nil {
+		return PlaybackDTO{}, e
+	}
+	// Resolution profiles are server policy; clients only select the ceiling.
+	if b.MaxHeight > 0 {
+		b.MaxBitrate = cfg.VideoBitrate(b.MaxHeight, 0)
+	}
 	method, e := playbackMethod(probe, b, f.Size, f.Duration)
 	if e != nil {
 		return PlaybackDTO{}, e
@@ -82,14 +94,6 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 		state = "ready"
 	}
 	if method == "transcode" {
-		data, err := s.DB.GetSetting(ctx, "encoding")
-		if err != nil {
-			return PlaybackDTO{}, err
-		}
-		cfg, err := media.ParseEncoding(data)
-		if err != nil {
-			return PlaybackDTO{}, err
-		}
 		if cfg.Mode != "nvidia" {
 			return PlaybackDTO{}, route.Fail(409, "Video transcoding is disabled")
 		}

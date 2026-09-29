@@ -87,7 +87,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	}
 	var videoArgs []string
 	if p.Method == "transcode" {
-		videoArgs, e = cfg.VideoArgs()
+		videoArgs, e = cfg.VideoArgs(cfg.VideoBitrate(b.MaxHeight, b.MaxBitrate))
 		if e != nil {
 			return e
 		}
@@ -112,7 +112,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	}
 	args = append(args, "-map", audio)
 	if p.Method == "audio" {
-		args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", audio, "-vn", "-c:a", "aac", "-b:a", "192k", "-ac", "2"}
+		args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", audio, "-vn", "-c:a", cfg.AudioCodec, "-b:a", strconv.Itoa(cfg.AudioBitrate), "-ac", "2"}
 	} else if p.Method == "remux" {
 		var probe media.Probe
 		if e = json.Unmarshal(f.Probe, &probe); e != nil {
@@ -122,10 +122,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		args = append(args, remuxAudioArgs(probe, b.AudioIndex)...)
 	} else {
 		args = append(args, videoArgs...)
-		args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k")
-		if b.MaxBitrate > 0 {
-			args = append(args, "-maxrate", strconv.Itoa(b.MaxBitrate), "-bufsize", strconv.Itoa(b.MaxBitrate*2))
-		}
+		args = append(args, "-c:a", cfg.AudioCodec, "-ac", "2", "-b:a", strconv.Itoa(cfg.AudioBitrate))
 		filters := []string{}
 		if b.MaxHeight > 0 {
 			filters = append(filters, resolutionFilter(b.MaxHeight))
@@ -162,7 +159,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				if e = extract.Run(); e != nil {
 					return fmt.Errorf("subtitle extraction failed: %w", e)
 				}
-				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass,setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay))
+				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass:force_style='%s',setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay, cfg.SubtitleStyle()))
 			}
 		}
 		if len(filters) > 0 {

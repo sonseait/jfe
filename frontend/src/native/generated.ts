@@ -880,11 +880,30 @@ export interface components {
     };
     Empty: Record<string, never>;
     EncodingDTO: {
+      audioBitrate: number;
+      /** @enum {string} */
+      audioCodec: 'aac' | 'ac3';
+      bitrate1080: number;
+      bitrate2160: number;
+      bitrate720: number;
       cq: number;
       device: number;
       maxConcurrent: number;
       /** @enum {string} */
       mode: 'disabled' | 'nvidia';
+      /** @enum {string} */
+      preset: 'p1' | 'p2' | 'p3' | 'p4' | 'p5' | 'p6' | 'p7';
+      subtitleBackground: string;
+      subtitleBackgroundOpacity: number;
+      subtitleBorderColor: string;
+      subtitleColor: string;
+      /** @enum {string} */
+      subtitleFont: 'Arial' | 'Noto Sans' | 'Noto Sans CJK';
+      subtitleMargin: number;
+      subtitleOutline: number;
+      subtitleSize: number;
+      /** @enum {string} */
+      videoCodec: 'h264' | 'hevc';
     };
     FileDTO: {
       available: boolean;

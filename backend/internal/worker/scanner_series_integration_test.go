@@ -75,8 +75,8 @@ func TestScanRegroupsSeriesByFolder(t *testing.T) {
 			t.Fatalf("wrong regrouped episode: %+v %v", item, err)
 		}
 	}
-	// Force refresh must schedule once per show, including already identified
-	// shows, while respecting locks and never scheduling episode TMDB lookups.
+	// Force refresh schedules once per unlocked show. Its worker then schedules
+	// metadata lookups for that show's unlocked episodes.
 	if _, err := pool.Exec(ctx, `UPDATE items SET provider_id='42',metadata_locked=(title='Other') WHERE library_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}

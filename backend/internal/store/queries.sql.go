@@ -439,7 +439,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id string) (Library, error) {
 }
 
 const getPlayback = `-- name: GetPlayback :one
-SELECT id, user_id, item_id, file_id, token_hash, method, state, start_position, sequence, position, expires_at, updated_at, decision FROM playback_sessions WHERE id=$1
+SELECT id, user_id, item_id, file_id, token_hash, method, state, start_position, sequence, position, expires_at, updated_at, decision, preview FROM playback_sessions WHERE id=$1
 `
 
 func (q *Queries) GetPlayback(ctx context.Context, id string) (PlaybackSession, error) {
@@ -459,6 +459,7 @@ func (q *Queries) GetPlayback(ctx context.Context, id string) (PlaybackSession, 
 		&i.ExpiresAt,
 		&i.UpdatedAt,
 		&i.Decision,
+		&i.Preview,
 	)
 	return i, err
 }
@@ -757,14 +758,16 @@ func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]Item, e
 }
 
 const listJobDetails = `-- name: ListJobDetails :many
-SELECT j.id, j.role, j.kind, j.resource_id, j.state, j.payload, j.error, j.progress, j.attempts, j.lease_id, j.lease_until, j.cancel_requested, j.created_at, j.updated_at, j.total_files, j.processed_files, j.next_attempt_at, COALESCE(l.name, i.title, pi.title, '')::text AS resource_name,
- COALESCE(i.id, pi.id, '')::text AS item_id,
- COALESCE(l.id, i.library_id, pi.library_id, '')::text AS library_id
+SELECT j.id, j.role, j.kind, j.resource_id, j.state, j.payload, j.error, j.progress, j.attempts, j.lease_id, j.lease_until, j.cancel_requested, j.created_at, j.updated_at, j.total_files, j.processed_files, j.next_attempt_at, COALESCE(l.name, i.title, pi.title, si.title, '')::text AS resource_name,
+ COALESCE(i.id, pi.id, si.id, '')::text AS item_id,
+ COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id
 FROM jobs j
 LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
+LEFT JOIN media_files sf ON j.kind='subtitle_sync' AND sf.id=j.resource_id
+LEFT JOIN items si ON si.id=sf.item_id
 ORDER BY j.created_at DESC LIMIT 100
 `
 
@@ -987,7 +990,7 @@ func (q *Queries) PatchSetting(ctx context.Context, arg PatchSettingParams) erro
 }
 
 const playbackProgress = `-- name: PlaybackProgress :one
-UPDATE playback_sessions SET position=$3,sequence=$4,updated_at=now() WHERE id=$1 AND user_id=$2 AND sequence<$4 AND state IN ('ready','preparing') AND expires_at>now() RETURNING id, user_id, item_id, file_id, token_hash, method, state, start_position, sequence, position, expires_at, updated_at, decision
+UPDATE playback_sessions SET position=$3,sequence=$4,updated_at=now() WHERE id=$1 AND user_id=$2 AND sequence<$4 AND state IN ('ready','preparing') AND expires_at>now() RETURNING id, user_id, item_id, file_id, token_hash, method, state, start_position, sequence, position, expires_at, updated_at, decision, preview
 `
 
 type PlaybackProgressParams struct {
@@ -1019,6 +1022,7 @@ func (q *Queries) PlaybackProgress(ctx context.Context, arg PlaybackProgressPara
 		&i.ExpiresAt,
 		&i.UpdatedAt,
 		&i.Decision,
+		&i.Preview,
 	)
 	return i, err
 }
@@ -1332,7 +1336,7 @@ func (q *Queries) SetState(ctx context.Context, arg SetStateParams) (UserState, 
 }
 
 const startPlayback = `-- name: StartPlayback :exec
-INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at,decision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,COALESCE($10::jsonb,'{}'::jsonb))
+INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at,decision,preview) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,COALESCE($10::jsonb,'{}'::jsonb),$11)
 `
 
 type StartPlaybackParams struct {
@@ -1346,6 +1350,7 @@ type StartPlaybackParams struct {
 	StartPosition float64
 	ExpiresAt     time.Time
 	Decision      []byte
+	Preview       bool
 }
 
 func (q *Queries) StartPlayback(ctx context.Context, arg StartPlaybackParams) error {
@@ -1360,6 +1365,7 @@ func (q *Queries) StartPlayback(ctx context.Context, arg StartPlaybackParams) er
 		arg.StartPosition,
 		arg.ExpiresAt,
 		arg.Decision,
+		arg.Preview,
 	)
 	return err
 }

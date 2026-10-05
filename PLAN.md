@@ -8,6 +8,7 @@ Giữ các quyết định đã chốt:
 - Phim/series: users, libraries, scan, metadata local + TMDB, tìm kiếm/infinite scroll, favorites, watched, resume và next episode.
 - Direct play, remux, HLS NVIDIA NVENC, audio/subtitle selection và lưu tiến độ xem. Chỉ hai chế độ video: NVIDIA hoặc tắt chuyển mã (mặc định); không fallback encode video bằng CPU.
 - User độc lập, vai trò admin/user và quyền truy cập thư viện.
+- Player chỉnh timing phụ đề bằng slider, lưu riêng theo user/file/track trong PostgreSQL; có thể trở về timing mặc định từ file, không ghi nguồn.
 - Bốn process chạy cùng máy, chung PostgreSQL và filesystem volumes.
 - Chưa gồm household profiles, GPU khác NVIDIA, plugin runtime, Redis, S3 hoặc cluster.
 
@@ -15,7 +16,7 @@ Frontend giữ thiết kế hiện tại; những chức năng ngoài scope đư
 
 ## 2. Monorepo và bốn binary
 
-Chuyển toàn bộ source, assets, tests, package/lockfile và cấu hình frontend vào `frontend/`. Backend và frontend có Makefile riêng trong từng thư mục; root giữ hướng dẫn toàn project và `AGENTS.md`.
+Chuyển toàn bộ source, assets, package/lockfile và cấu hình frontend vào `frontend/`. Backend và frontend có Makefile riêng trong từng thư mục; root giữ hướng dẫn toàn project và `AGENTS.md`.
 
 Backend dùng **Go, Fiber v3, pgx/v5, sqlc, PostgreSQL và rs/zerolog**, có đúng bốn binary:
 
@@ -30,10 +31,10 @@ Backend dùng **Go, Fiber v3, pgx/v5, sqlc, PostgreSQL và rs/zerolog**, có đ�
 - Migration dùng trực tiếp golang-migrate CLI (image chính thức trong Compose); không nhúng migration runner vào API. Export OpenAPI qua `api openapi`. Project chỉ build bốn binary ứng dụng.
 - Ba worker claim loại job tương ứng từ PostgreSQL bằng transaction ngắn, `SKIP LOCKED`, lease và heartbeat.
 - Scan/metadata có retry giới hạn và chạy lại an toàn. Playback gắn với phiên, hỗ trợ cancellation; worker chết phải khiến phiên báo lỗi có thể phục hồi từ tiến độ đã lưu.
-- Video mount chỉ đọc; scanner được ghi thư viện audio để sửa tag. Kho import riêng cho scanner/downloader ghi, API/transcoder chỉ đọc; artwork và playback cache có volume ghi riêng. API phục vụ file, không chạy FFmpeg trong request handler.
+- API/transcoder mount video chỉ đọc; scanner được ghi thư mục video khi bật chỉnh sửa phụ đề gốc, và được ghi thư viện audio để sửa tag. Kho import riêng cho scanner/downloader ghi, API/transcoder chỉ đọc; artwork và playback cache có volume ghi riêng. API phục vụ file, không chạy FFmpeg trong request handler.
 - Mặc định mỗi loại worker có một instance; giới hạn concurrency cấu hình riêng.
 
-Tái sử dụng có chọn lọc logic/tests của Silo về naming, probing, scan và playback. Viết mới transport, schema, sqlc repositories và bootstrap; không copy nguyên kiến trúc Silo. Giữ attribution/AGPL cho backend phái sinh, không lấy branding Silo.
+Tái sử dụng có chọn lọc logic của Silo về naming, probing, scan và playback. Viết mới transport, schema, sqlc repositories và bootstrap; không copy nguyên kiến trúc Silo. Giữ attribution/AGPL cho backend phái sinh, không lấy branding Silo.
 
 ## 3. Route wrapper là nguồn sinh OpenAPI
 
@@ -69,15 +70,15 @@ Quy ước bắt buộc:
 
 Các hàm Get/Post/Put/Patch/Delete wrap trực tiếp Fiber; không dùng Huma. Sinh schema bằng invopop/jsonschema và validate bằng santhosh-tekuri/jsonschema từ cùng DTO tags. Export OpenAPI phải chạy được không cần database, worker hoặc FFmpeg. Config/env dùng Viper.
 
-Cung cấp `/openapi.json` và `/docs`. CI kiểm tra spec hợp lệ, route coverage và artifacts được sinh lại không lệch source.
+Cung cấp `/openapi.json` và `/docs`. CI sinh lại contracts và kiểm tra artifacts không lệch source.
 
 ## 4. API và frontend phải đi cùng nhau
 
 **Một API chưa hoàn thành nếu frontend tương ứng chưa được cập nhật.** Áp dụng cho cả endpoint mới và thay đổi contract.
 
 - Sinh TypeScript types từ OpenAPI, dùng typed API client chung cho frontend.
-- Mỗi lát cắt tính năng gồm: migration/query → service → typed route/docs → frontend hook/screen → tests.
-- Thay đổi DTO phải cập nhật generated types, API calls, trạng thái loading/error/empty và tests frontend trong cùng thay đổi.
+- Mỗi lát cắt tính năng gồm: migration/query → service → typed route/docs → frontend hook/screen.
+- Thay đổi DTO phải cập nhật generated types, API calls, trạng thái loading/error/empty trong cùng thay đổi.
 - Với API hạ tầng không có màn hình riêng, tích hợp vào luồng sử dụng tương ứng; không tạo trang giả chỉ để đánh dấu hoàn thành.
 - Bỏ dần Jellyfin SDK/contracts khi chuyển từng luồng. Kết thúc bản đầu, mọi tính năng đang hiển thị phải chạy với backend mới.
 - Backend cung cấp capabilities thực tế; frontend không hiển thị thao tác chưa được hỗ trợ.
@@ -99,14 +100,9 @@ Hợp đồng chính:
 4. **Playback/transcoder:** direct play trước, sau đó remux/HLS NVIDIA NVENC, audio/phụ đề, resume, cancellation và cleanup; nối player hiện tại.
 5. **Admin và ổn định:** cấu hình NVIDIA NVENC hoặc tắt chuyển mã, worker status, lịch scan, metadata editor cơ bản, capabilities và tài liệu vận hành.
 
-Kiểm thử bắt buộc:
-
-- Route wrapper: DTO binding/validation, optional/required fields, params, lỗi, status, auth và OpenAPI đúng với hành vi runtime.
-- PostgreSQL integration: migrations, sqlc, phân quyền, worker claim/lease/retry và progress ordering.
-- Media: HTTP Range/seek, FFmpeg thật, phụ đề, token hết hạn, worker restart và cleanup.
-- Frontend: typecheck, lint, unit tests và E2E desktop/mobile; giữ các sửa lỗi fullscreen, infinite scroll và modal.
-- E2E backend thật: setup → login → tạo thư viện → scan fixture → duyệt/tìm kiếm → phát → tiếp tục xem.
-- CI sinh lại OpenAPI và frontend types, thất bại nếu artifacts chưa được cập nhật.
+Theo yêu cầu ngày 2026-10-05, loại bỏ toàn bộ automated testing (unit, integration, media fixtures và E2E).
+Giữ build, lint và sinh OpenAPI/frontend types; CI thất bại nếu generated artifacts chưa được cập nhật.
+Runtime validation, phân quyền, lease/recovery và an toàn file vẫn là yêu cầu sản phẩm.
 
 Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách nhiệm bốn binary, quy tắc DTO/route wrapper, sqlc, generated artifacts và yêu cầu **API + frontend trong cùng thay đổi**.
 
@@ -139,5 +135,12 @@ Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách 
   quyền lúc thực thi. Downloader không dùng thư viện video làm đích nhập.
 - Audio direct play hoặc HLS AAC do transcoder xử lý, hoạt động khi chế độ video
   disabled. Tái sử dụng token playback, Range và progress ordering hiện có.
-- Mỗi thay đổi API đi cùng frontend EN/VI và tests. Kiểm tra file thực bằng
-  Mutagen/FFmpeg, PostgreSQL disposable, worker recovery và E2E desktop/mobile.
+- Mỗi thay đổi API đi cùng frontend EN/VI trong cùng thay đổi.
+
+
+## Công cụ phụ đề theo phim lẻ/tập phim
+
+- Editor có preview video, thanh seek, danh sách thời gian/text và offset toàn bộ track; không sửa từng câu. Preview ưu tiên direct/remux, chỉ encode video bằng NVIDIA khi cần, preview tối đa 720p/2 Mbps để phản hồi nhanh.
+- Admin và người có quyền import trong thư viện được sync/xóa nguồn phụ đề dùng chung. Scanner sửa timestamp UTF-8 SRT/VTT/ASS/SSA rời hoặc remux track text MKV, không encode video/audio.
+- Cho phép xóa track nhúng MKV (kể cả PGS/DVD), file phụ đề rời và upload cá nhân của chủ sở hữu. Xóa track dùng để burn-in khi phát; không xử lý chữ đã encode vào hình ảnh video.
+- Bật qua `JFE_SUBTITLE_EDITING`, mặc định tắt. API/transcoder chỉ đọc; scanner có quyền ghi có chủ đích. Xác nhận thao tác ghi đè/xóa; khóa file, kiểm tra fingerprint, journal phục hồi, thay thế atomic và không giữ backup sau khi hoàn tất. Chặn chỉnh sửa khi file đang được phát.

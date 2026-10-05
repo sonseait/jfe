@@ -12,19 +12,32 @@ import (
 	"time"
 )
 
-// Scanner publishes plain text cues so text subtitles never start a video
-// encoder. ASS retains its explicit burn-in path to preserve styling.
-func (w *Worker) prepareTextSubtitles(ctx context.Context, fileID, source string, probe *media.Probe) {
+// Scanner publishes plain-text cues for editor previews and FFmpeg text burn-in
+// without rereading unchanged movies. ASS retains its source styling.
+func (w *Worker) prepareTextSubtitles(ctx context.Context, fileID, source string, probe *media.Probe, unchanged bool) {
 	for i := range probe.Streams {
 		track := &probe.Streams[i]
-		track.SubtitleID = ""
 		switch track.Codec {
 		case "subrip", "srt", "webvtt", "vtt":
 		default:
+			track.SubtitleID = ""
 			continue
 		}
 		id := stable("subtitle", fileID, strconv.Itoa(track.Index))
 		dir := filepath.Join(w.Config.CacheRoot, "subtitles")
+		// An unchanged container has the same embedded track content. External
+		// sidecars are rediscovered separately and may change without the video.
+		if unchanged && track.ExternalPath == "" && track.SubtitleID == id {
+			cache := filepath.Join(dir, id+".json")
+			if stat, err := os.Stat(cache); err == nil && stat.Mode().IsRegular() && stat.Size() <= 524288 {
+				data, err := os.ReadFile(cache)
+				var cues []media.Cue
+				if err == nil && json.Unmarshal(data, &cues) == nil && cues != nil {
+					continue
+				}
+			}
+		}
+		track.SubtitleID = ""
 		if os.MkdirAll(dir, 0750) != nil {
 			continue
 		}

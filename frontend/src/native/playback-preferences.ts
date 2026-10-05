@@ -19,10 +19,10 @@ export function preferredSubtitle(
   language: string,
   canTranscode: boolean,
 ) {
-  // Text overlays avoid re-encoding the video and also work with transcoding disabled.
+  // All subtitle sources are rendered by FFmpeg through NVENC playback.
+  if (!canTranscode) return '-1';
   const external = uploaded.find((sub) => matchesLanguage(sub.name, language));
   if (external) return 'upload:' + external.id;
-  if (!canTranscode) return '-1';
   const subtitles = tracks.filter((track) => track.type === 'subtitle');
   const embedded =
     subtitles.find((track) => matchesLanguage(track.language, language)) ??

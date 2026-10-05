@@ -122,6 +122,13 @@ type MediaFile struct {
 	Available  bool
 }
 
+type PersonalSubtitleTiming struct {
+	UserID    string
+	FileID    string
+	SourceKey string
+	OffsetMs  int32
+}
+
 type PlaybackSession struct {
 	ID            string
 	UserID        string
@@ -136,6 +143,7 @@ type PlaybackSession struct {
 	ExpiresAt     time.Time
 	UpdatedAt     time.Time
 	Decision      []byte
+	Preview       bool
 }
 
 type Session struct {
@@ -147,6 +155,21 @@ type Session struct {
 type Setting struct {
 	Key   string
 	Value []byte
+}
+
+type SubtitleSyncJob struct {
+	ID            string
+	UserID        string
+	FileID        string
+	TrackIndex    int32
+	ProbeRevision string
+	Action        string
+	Fingerprint   string
+	OffsetMs      int32
+	SourcePath    string
+	Cues          []byte
+	Phase         string
+	ErrorCode     string
 }
 
 type UploadedSubtitle struct {

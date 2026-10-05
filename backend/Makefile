@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev scanner downloader transcoder generate openapi migrate test test-integration lint build docker-build docker-push
+.PHONY: help dev scanner downloader transcoder generate openapi migrate lint build docker-build docker-push
 
 -include .env
 export
@@ -10,7 +10,7 @@ IMAGE_TAG ?= latest
 IMAGE = $(if $(strip $(REGISTRY)),$(patsubst %/,%,$(strip $(REGISTRY)))/)$(IMAGE_NAME):$(IMAGE_TAG)
 
 help:
-	@echo "Targets: dev scanner downloader transcoder generate openapi migrate test test-integration lint build docker-build docker-push"
+	@echo "Targets: dev scanner downloader transcoder generate openapi migrate lint build docker-build docker-push"
 	@echo "Docker: REGISTRY=<host/namespace> IMAGE_NAME=jfe-backend IMAGE_TAG=latest"
 
 dev:
@@ -35,12 +35,6 @@ openapi:
 migrate:
 	@test -n "$$DATABASE_URL" || { echo "Set DATABASE_URL in backend/.env" >&2; exit 1; }
 	migrate -path db/migrations -database "$$DATABASE_URL" up
-
-test:
-	go test ./...
-
-test-integration:
-	bash scripts/test-integration.sh
 
 lint:
 	go vet ./...

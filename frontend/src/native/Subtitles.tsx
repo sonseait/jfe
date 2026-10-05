@@ -3,13 +3,15 @@ import {
   Button,
   FileButton,
   Menu,
-  NumberInput,
+  Modal,
+  Slider,
+  SegmentedControl,
   Popover,
   ScrollArea,
   Stack,
   Text,
 } from '@mantine/core';
-import { Clock3, Upload } from 'lucide-react';
+import { Clock3, Upload, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { api, result, useResource } from './api';
@@ -76,18 +78,22 @@ export function SubtitleUpload({
 export function SubtitleTiming({
   value,
   onChange,
+  onChangeEnd,
   active,
   burned,
   portalTarget,
 }: {
   value: number;
   onChange: (v: number) => void;
+  onChangeEnd: (v: number) => void;
   active: boolean;
   burned: boolean;
   portalTarget?: HTMLElement;
 }) {
   const { t } = useTranslation();
   const [opened, setOpened] = useState(false);
+  const [range, setRange] = useState(10);
+  const limit = Math.max(range, Math.ceil(Math.abs(value)));
   return (
     <Popover
       opened={active && opened}
@@ -119,20 +125,40 @@ export function SubtitleTiming({
       <Popover.Dropdown className="subtitle-timing-popover">
         <ScrollArea.Autosize mah="min(280px, 50dvh)" scrollbars="y" type="auto">
           <Stack gap={4} className="subtitle-timing">
-            <NumberInput
+            <Text size="xs">
+              {t('playerSub.delay')}: {value > 0 ? '+' : ''}
+              {value.toFixed(1)}s
+            </Text>
+            <SegmentedControl
               size="xs"
-              label={t('playerSub.delay')}
+              value={String(range)}
+              onChange={(v) => setRange(Number(v))}
+              data={[10, 60, 600].map((v) => ({ value: String(v), label: `±${v}s` }))}
+              aria-label={t('playerSub.timingRange')}
+            />
+            <Slider
+              thumbLabel={t('playerSub.delay')}
               value={value}
-              min={-600}
-              max={600}
+              min={-limit}
+              max={limit}
               step={0.1}
-              decimalScale={1}
-              onChange={(v) => onChange(Number(v))}
+              label={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}s`}
+              onChange={onChange}
+              onChangeEnd={onChangeEnd}
+              marks={[{ value: 0, label: '0' }]}
+              mb="sm"
             />
             <Text size="xs" c="dimmed">
-              {t('playerSub.delayHelp')}
+              {t('playerSub.delayHelp')} {t('playerSub.personalTiming')}
             </Text>
-            <Button size="compact-xs" variant="subtle" onClick={() => onChange(0)}>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              onClick={() => {
+                onChange(0);
+                onChangeEnd(0);
+              }}
+            >
               {t('playerSub.reset')}
             </Button>
             {burned && (
@@ -177,4 +203,60 @@ export function SubtitleOverlay({
       <span>{text}</span>
     </div>
   ) : null;
+}
+
+export function UploadedSubtitleDelete({
+  fileId,
+  subtitleId,
+  onDeleted,
+}: {
+  fileId: string;
+  subtitleId: string;
+  onDeleted: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [opened, setOpened] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <Menu.Item color="red" leftSection={<Trash2 size={15} />} onClick={() => setOpened(true)}>
+        {t('subtitleEditor.deleteUpload')}
+      </Menu.Item>
+      <Modal
+        opened={opened}
+        onClose={() => {
+          if (!busy) setOpened(false);
+        }}
+        title={t('confirm')}
+        scrollAreaComponent={ScrollArea.Autosize}
+      >
+        <Stack>
+          <Text>{t('subtitleEditor.confirmDeleteUpload')}</Text>
+          <Button
+            color="red"
+            loading={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                result(
+                  await api.DELETE('/api/v1/files/{id}/subtitles/{subtitleId}', {
+                    params: { path: { id: fileId, subtitleId } },
+                  }),
+                );
+                await onDeleted();
+                setOpened(false);
+                toast.success(t('subtitleEditor.deleted'));
+              } catch {
+                toast.error(t('error'));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {t('subtitleEditor.deleteUpload')}
+          </Button>
+        </Stack>
+      </Modal>
+    </>
+  );
 }

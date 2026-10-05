@@ -134,8 +134,8 @@ func (s *Server) saveUser(ctx context.Context, id string, b UserRequest) (UserDT
 		if e != nil {
 			return UserDTO{}, e
 		}
-		if !audio.IsLibrary(library.Kind) {
-			return UserDTO{}, route.Fail(422, "Import permission requires an audio library")
+		if !audio.IsLibrary(library.Kind) && library.Kind != "movies" && library.Kind != "series" {
+			return UserDTO{}, route.Fail(422, "Import permission requires an audio or video library")
 		}
 		if err = q.GrantImport(ctx, store.GrantImportParams{UserID: u.ID, LibraryID: lib}); err != nil {
 			return UserDTO{}, err

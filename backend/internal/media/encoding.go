@@ -106,3 +106,12 @@ func (cfg Encoding) VideoBitrate(height, limit int) int {
 	}
 	return bitrate
 }
+
+// CUDAInputArgs creates one selected device for decode, filters and uploads.
+// Used by all video transcodes; direct play/remux never require a GPU.
+func (cfg Encoding) CUDAInputArgs() ([]string, error) {
+	if cfg.Mode != "nvidia" {
+		return nil, fmt.Errorf("video transcoding is disabled")
+	}
+	return []string{"-init_hw_device", "cuda=jfe:" + strconv.Itoa(cfg.Device), "-filter_hw_device", "jfe", "-hwaccel", "cuda", "-hwaccel_device", "jfe", "-hwaccel_output_format", "cuda"}, nil
+}

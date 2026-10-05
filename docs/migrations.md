@@ -23,10 +23,8 @@ migrate -path backend/db/migrations -database "$DATABASE_URL" version
 
 Compose runs `migrate/migrate:v4.20.1` with the SQL directory mounted read-only;
 API and workers start after it succeeds. No CLI installation is required on the
-host for Compose. CI installs the same version. Run `make -C backend test-integration` with JFE_TEST_DATABASE_URL set and the CLI
-on PATH. The shell script creates disposable schemas and invokes migrate before
-Go tests; Go code does not launch or wrap the migration CLI. Each test suite
-receives JFE_TEST_SCHEMA_URL from the script, and schemas are removed on exit.
+host for Compose. Go code does not launch or wrap the migration CLI.
+Automated migration/integration test harnesses have been removed.
 
 Files live in `backend/db/migrations`, with matching numbered `.up.sql` and
 `.down.sql` files. Add a new version instead of editing an applied migration.

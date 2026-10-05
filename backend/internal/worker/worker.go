@@ -46,10 +46,17 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, role string
 	if _, e := exec.LookPath("node"); e != nil {
 		youtubeReady = false
 	}
+	_, subtitleFF := exec.LookPath("ffmpeg")
+	_, subtitleProbe := exec.LookPath("ffprobe")
+	_, subtitleMKV := exec.LookPath("mkvmerge")
+	_, subtitleExtract := exec.LookPath("mkvextract")
+	subtitleReady := cfg.SubtitleEditing && subtitleFF == nil && subtitleProbe == nil
 	caps, _ := json.Marshal(struct {
-		Audio   bool `json:"audio"`
-		YouTube bool `json:"youtube"`
-	}{audioReady, youtubeReady})
+		SubtitleSync bool `json:"subtitleSync"`
+		SubtitleMKV  bool `json:"subtitleMKV"`
+		Audio        bool `json:"audio"`
+		YouTube      bool `json:"youtube"`
+	}{subtitleReady, subtitleReady && subtitleMKV == nil && subtitleExtract == nil, audioReady, youtubeReady})
 
 	slots := cfg.Concurrency
 	if role == "transcoder" || role == "downloader" {
@@ -75,6 +82,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, role string
 		if role == "scanner" {
 			w.schedule(ctx)
 			w.cleanupAudio(ctx)
+			w.recoverSubtitles(ctx)
 		}
 		if role == "downloader" {
 			w.scheduleDownloads(ctx)
@@ -131,6 +139,8 @@ func (w *Worker) runJob(ctx context.Context, j store.Job) {
 	switch j.Kind {
 	case "youtube_preview", "youtube_download":
 		err = w.youtubeJob(jobCtx, j)
+	case "subtitle_sync":
+		err = w.subtitleJob(jobCtx, j)
 	case "audio_tags":
 		err = w.writeAudioTags(jobCtx, j)
 	case "scan":
@@ -163,6 +173,12 @@ func (w *Worker) runJob(ctx context.Context, j store.Job) {
 			state = "pending"
 		}
 		message = "Job failed; inspect worker logs"
+		if j.Kind == "subtitle_sync" {
+			record, e := w.DB.GetSubtitleSyncJob(jobCtx, j.ID)
+			if e == nil && record.ErrorCode != "" {
+				message = record.ErrorCode
+			}
+		}
 		if code := audio.JobErrorCode(err); code != "" && (j.Kind == "youtube_preview" || j.Kind == "youtube_download" || j.Kind == "audio_tags") {
 			message = code
 		}

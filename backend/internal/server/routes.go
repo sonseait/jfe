@@ -224,6 +224,8 @@ func (s *Server) register() {
 	s.playbackRoutes()
 	s.settingsRoutes()
 	s.subtitleRoutes()
+	s.subtitleTimingRoutes()
+	s.subtitleSyncRoutes()
 }
 
 func (s *Server) youtubeAvailable(ctx context.Context) bool {

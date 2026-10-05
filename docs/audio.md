@@ -128,13 +128,10 @@ local per user; listening progress for long audio is stored on the server. Only 
 video/audio player is active. Browser background/lock-screen support depends on Media
 Session and device/browser behavior.
 
-Run `make -C backend generate` before `make -C frontend generate`. Unit tests use
-real generated audio for Mutagen round trips; set `JFE_PYTHON` or they report a skip.
-`make -C backend test-integration` requires a disposable PostgreSQL URL and Mutagen;
-it covers migrations, permissions, tag publication recovery and downloader leases.
-`make -C frontend test-e2e` exercises the real API/scanner with desktop/mobile layouts.
-Network-dependent YouTube and MusicBrainz checks are separate from deterministic
-fixtures; test passes do not imply every remote video is downloadable.
+Run `make -C backend generate` before `make -C frontend generate`. Automated
+test suites have been removed. Public YouTube and MusicBrainz behavior depends
+on the deployed environment; do not claim provider behavior is verified solely
+from a successful build.
 
 
 ## Provider verification note

@@ -36,7 +36,7 @@ func playbackMethod(probe media.Probe, b PlaybackRequest, size int64, duration f
 		if !hasAudio {
 			return "", route.Fail(422, "No audio or video stream")
 		}
-		if b.SubtitleIndex != -1 {
+		if b.SubtitleIndex != -1 || b.SubtitleID != "" {
 			return "", route.Fail(422, "Audio does not support subtitles")
 		}
 		if b.DirectPlay && !b.ForceTranscode {
@@ -48,10 +48,10 @@ func playbackMethod(probe media.Probe, b PlaybackRequest, size int64, duration f
 	if duration > 0 {
 		bitrate = float64(size) * 8 / duration
 	}
-	maxWidth := map[int]int{720: 1280, 1080: 1920, 2160: 3840}[b.MaxHeight]
+	maxWidth := map[int]int{360: 640, 720: 1280, 1080: 1920, 2160: 3840}[b.MaxHeight]
 	resize := b.MaxHeight > 0 && (video.Height == 0 || video.Height > b.MaxHeight || (maxWidth > 0 && video.Width > maxWidth))
 	reduceBitrate := b.MaxBitrate > 0 && (bitrate == 0 || bitrate > float64(b.MaxBitrate))
-	if b.ForceTranscode || b.SubtitleIndex != -1 || resize || reduceBitrate {
+	if b.ForceTranscode || (b.SubtitleIndex != -1 || b.SubtitleID != "") || resize || reduceBitrate {
 		return "transcode", nil
 	}
 	container := strings.Contains(probe.Format.Name, "mp4") || strings.Contains(probe.Format.Name, "webm")

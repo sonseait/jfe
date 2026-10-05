@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -69,6 +70,20 @@ func (s *Server) playbackDTO(ctx context.Context, p store.PlaybackSession) (Play
 	return dto, nil
 }
 func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (PlaybackDTO, error) {
+	if b.Preview {
+		if _, e := s.subtitleEditAccess(ctx, b.FileID); e != nil {
+			return PlaybackDTO{}, e
+		}
+		if !s.Config.SubtitleEditing {
+			return PlaybackDTO{}, route.Fail(409, "Subtitle editing is disabled")
+		}
+		b.SubtitleIndex = -1
+		b.SubtitleID = ""
+		b.SubtitleDelay = 0
+		b.MaxHeight = 0
+		b.MaxBitrate = 0
+		b.AutoQuality = false
+	}
 	f, e := s.DB.GetFile(ctx, b.FileID)
 	if e != nil {
 		return PlaybackDTO{}, e
@@ -85,6 +100,34 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	var probe media.Probe
 	if e = json.Unmarshal(f.Probe, &probe); e != nil {
 		return PlaybackDTO{}, e
+	}
+	if b.SubtitleID != "" {
+		if b.SubtitleIndex != -1 {
+			return PlaybackDTO{}, route.Fail(422, "Select one subtitle source")
+		}
+		prepared := false
+		for _, track := range probe.Streams {
+			if track.Type == "subtitle" && track.SubtitleID == b.SubtitleID {
+				prepared = true
+				// Sidecars are cheap to read directly and retain source formatting.
+				// Embedded text uses scanner's cache to avoid rereading the movie.
+				root := filepath.Join(s.Config.CacheRoot, "subtitles")
+				cached, err := media.Within(root, filepath.Join(root, track.SubtitleID+".json"))
+				if err == nil {
+					_, err = os.Stat(cached)
+				}
+				if track.ExternalPath != "" || err != nil {
+					b.SubtitleIndex = track.Index
+					b.SubtitleID = ""
+				}
+				break
+			}
+		}
+		if !prepared {
+			if _, err := s.DB.GetSubtitle(ctx, store.GetSubtitleParams{ID: b.SubtitleID, FileID: f.ID, UserID: route.User(ctx).ID}); err != nil {
+				return PlaybackDTO{}, route.Fail(404, "Subtitle unavailable")
+			}
+		}
 	}
 	data, e := s.DB.GetSetting(ctx, "encoding")
 	if e != nil {
@@ -107,6 +150,14 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
+	if b.Preview && decision.Mode == PlaybackModeTranscode {
+		b.MaxHeight = 720
+		b.MaxBitrate = cfg.VideoBitrate(720, 2000000)
+		decision, e = playbackDecision(probe, b, f.Size, f.Duration)
+		if e != nil {
+			return PlaybackDTO{}, e
+		}
+	}
 	method := string(decision.Mode)
 	if decision.Mode == PlaybackModeDirectPlay {
 		method = "direct"
@@ -127,9 +178,6 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 			return PlaybackDTO{}, route.Fail(409, "Video transcoding is disabled")
 		}
 	}
-	if decision.SubtitleID != "" {
-		b.SubtitleIndex = -1
-	}
 	if b.Position > f.Duration {
 		b.Position = 0
 	}
@@ -140,8 +188,25 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	}
 	defer tx.Rollback(ctx)
 	q := s.DB.WithTx(tx)
+	if e = q.LockSubtitleFile(ctx, f.ID); e != nil {
+		return PlaybackDTO{}, e
+	}
+	busy, err := q.SubtitleFileBusy(ctx, f.ID)
+	if err != nil {
+		return PlaybackDTO{}, err
+	}
+	if busy {
+		return PlaybackDTO{}, route.Fail(409, "subtitle_busy")
+	}
+	currentFile, err := q.GetFile(ctx, f.ID)
+	if err != nil {
+		return PlaybackDTO{}, err
+	}
+	if currentFile.ModifiedAt != f.ModifiedAt || !bytes.Equal(currentFile.Probe, f.Probe) {
+		return PlaybackDTO{}, route.Fail(409, "subtitle_changed")
+	}
 	decisionJSON, _ := json.Marshal(decision)
-	e = q.StartPlayback(ctx, store.StartPlaybackParams{Decision: decisionJSON, ID: id, UserID: route.User(ctx).ID, ItemID: f.ItemID, FileID: f.ID, TokenHash: hash(t), Method: method, State: state, StartPosition: b.Position, ExpiresAt: time.Now().Add(6 * time.Hour)})
+	e = q.StartPlayback(ctx, store.StartPlaybackParams{Preview: b.Preview, Decision: decisionJSON, ID: id, UserID: route.User(ctx).ID, ItemID: f.ItemID, FileID: f.ID, TokenHash: hash(t), Method: method, State: state, StartPosition: b.Position, ExpiresAt: time.Now().Add(6 * time.Hour)})
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
@@ -215,6 +280,9 @@ func (s *Server) playbackRoutes() {
 		}
 		if e != nil {
 			return out(HealthDTO{}, e)
+		}
+		if p.Preview {
+			return out(HealthDTO{"ok"}, tx.Commit(ctx))
 		}
 		e = q.SaveProgress(ctx, store.SaveProgressParams{UserID: p.UserID, ItemID: p.ItemID, Position: p.Position, Watched: f.Duration > 0 && p.Position >= f.Duration*float64(general.WatchedPercent)/100})
 		if e == nil {

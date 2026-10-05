@@ -4,8 +4,6 @@ dist/
 .env*
 !.env.example
 *.tsbuildinfo
-playwright-report/
-test-results/
 .DS_Store
 /backend/bin/
 /backend/cache/

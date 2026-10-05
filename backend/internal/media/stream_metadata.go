@@ -62,3 +62,23 @@ func (s Stream) SubtitleType() string {
 	}
 	return "unknown"
 }
+
+// DolbyVisionHDR10Base requires an explicitly signaled, single-layer profile 8
+// HDR10 base. Profile 5 and enhancement-layer streams need RPU-aware processing.
+// Keep HDRFormat as Dolby Vision for direct-play capability negotiation.
+func (s Stream) DolbyVisionHDR10Base() bool {
+	if s.Codec != "hevc" || s.ColorTransfer != "smpte2084" {
+		return false
+	}
+	found := false
+	for _, d := range s.SideData {
+		if !strings.Contains(d.Type, "DOVI") {
+			continue
+		}
+		if d.Type != "DOVI configuration record" || d.DVProfile != 8 || d.BLCompatibilityID != 1 || d.BLPresent != 1 || d.ELPresent == nil || *d.ELPresent != 0 {
+			return false
+		}
+		found = true
+	}
+	return found
+}

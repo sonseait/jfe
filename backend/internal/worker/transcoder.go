@@ -71,6 +71,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	}
 	var b struct {
 		AudioIndex, SubtitleIndex, MaxBitrate, MaxHeight int
+		SubtitleID                                       string
 		SubtitleDelay                                    float64
 		Position                                         float64
 		Decision                                         struct {
@@ -121,6 +122,11 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		if e != nil {
 			return e
 		}
+		if toneMap == "" {
+			if e = requireCUDAPlaybackFilters(ctx); e != nil {
+				return e
+			}
+		}
 	}
 	dir := filepath.Join(w.Config.CacheRoot, "playback", p.ID)
 	dir, e = filepath.Abs(dir)
@@ -135,7 +141,23 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", "0:v:0"}
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y"}
+	if p.Method == "transcode" {
+		inputArgs, err := cfg.CUDAInputArgs()
+		if err != nil {
+			return err
+		}
+		args = append(args, inputArgs...)
+		// NVENC consumes CUDA frames directly, rather than forcing a download.
+		videoArgs[len(videoArgs)-1] = "cuda"
+	}
+	if p.Method == "transcode" {
+		// Cap background generation at the player's maximum 2x speed. An
+		// initial burst keeps two published HLS segments ready without waiting
+		// for wall-clock playback. Remux/direct paths are not rate-limited.
+		args = append(args, playbackReadRateArgs()...)
+	}
+	args = append(args, "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", "0:v:0")
 	audio := "0:a:0?"
 	if b.AudioIndex >= 0 {
 		audio = "0:" + strconv.Itoa(b.AudioIndex)
@@ -167,19 +189,22 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 			args = append(args, media.SDRColorArgs()...)
 			args = append(args, "-filter_threads", "2", "-filter_complex_threads", "2", "-map_metadata", "-1")
 		}
-		// HDR is linearized/tone-mapped before any SDR subtitle composition.
+		// CUDA resize/format conversion also applies to SDR. NVENC receives
+		// eight-bit NV12 CUDA frames; HDR tone mapping remains before resize.
 		if b.MaxHeight > 0 {
-			filters = append(filters, resolutionFilter(b.MaxHeight))
+			filters = append(filters, cudaResolutionFilter(b.MaxHeight)+":format=nv12")
+		} else {
+			filters = append(filters, "scale_cuda=format=nv12")
 		}
 		bitmap := false
-		if b.SubtitleIndex >= 0 {
+		if b.SubtitleIndex >= 0 || b.SubtitleID != "" {
 			for _, s := range probe.Streams {
 				if s.Index == b.SubtitleIndex && (s.Codec == "hdmv_pgs_subtitle" || s.Codec == "dvd_subtitle") {
 					bitmap = true
 				}
 			}
 			if bitmap {
-				args = append(args, "-filter_complex", bitmapSubtitleGraph(toneMap, b.SubtitleIndex, b.SubtitleDelay, filters))
+				args = append(args, "-filter_complex", bitmapSubtitleGraph(bitmapBaseFilter(toneMap), b.SubtitleIndex, b.SubtitleDelay, bitmapOutputFilters(filters)))
 				for n := 0; n < len(args)-1; n++ {
 					if args[n] == "-map" && args[n+1] == "0:v:0" {
 						args[n+1] = "[v]"
@@ -197,11 +222,52 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 						subtitleMap = "0:0"
 					}
 				}
+				if b.SubtitleID != "" {
+					var cueData []byte
+					prepared := false
+					for _, track := range probe.Streams {
+						if track.Type == "subtitle" && track.SubtitleID == b.SubtitleID {
+							root := filepath.Join(w.Config.CacheRoot, "subtitles")
+							cached, err := media.Within(root, filepath.Join(root, track.SubtitleID+".json"))
+							if err != nil {
+								return err
+							}
+							cueData, e = os.ReadFile(cached)
+							if e != nil {
+								return e
+							}
+							prepared = true
+							break
+						}
+					}
+					if !prepared {
+						row, err := w.DB.GetSubtitle(ctx, store.GetSubtitleParams{ID: b.SubtitleID, FileID: p.FileID, UserID: p.UserID})
+						if err != nil {
+							return fmt.Errorf("subtitle unavailable: %w", err)
+						}
+						cueData = row.Cues
+					}
+					var cues []media.Cue
+					if err := json.Unmarshal(cueData, &cues); err != nil {
+						return err
+					}
+					content, err := media.SubtitlesSRT(cues)
+					if err != nil {
+						return err
+					}
+					subtitlePath = filepath.Join(dir, "subtitles.srt")
+					if err = os.WriteFile(subtitlePath, []byte(content), 0600); err != nil {
+						return err
+					}
+					subtitleMap = "0:0"
+				}
 				extract := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", subtitlePath, "-map", subtitleMap, "-c:s", "ass", filepath.Join(dir, "subtitles.ass"))
 				if e = extract.Run(); e != nil {
 					return fmt.Errorf("subtitle extraction failed: %w", e)
 				}
+				filters = append(filters, "hwdownload", "format=nv12", "format=yuv420p")
 				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass:force_style='%s',setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay, cfg.SubtitleStyle()))
+				filters = append(filters, "format=nv12", "hwupload_cuda")
 			}
 		}
 		if toneMap != "" && !bitmap {
@@ -211,6 +277,10 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 			args = append(args, "-vf", strings.Join(filters, ","))
 		}
 		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*4)")
+	}
+	if p.Method == "transcode" {
+		// Machine-readable FPS/speed diagnostics contain no source path.
+		args = append(args, "-stats_period", "1", "-progress", "progress.txt")
 	}
 	remuxMP4 := p.Method == "remux" && b.Decision.Container == "mp4"
 	if remuxMP4 {
@@ -417,4 +487,23 @@ func filterSuffix(filters []string) string {
 		return ""
 	}
 	return "," + strings.Join(filters, ",")
+}
+
+func cudaResolutionFilter(height int) string {
+	return strings.Replace(resolutionFilter(height), "scale=", "scale_cuda=", 1)
+}
+
+// Bitmap subtitles keep source coordinates until overlay, then resize on CUDA.
+func bitmapBaseFilter(toneMap string) string {
+	if toneMap == "" {
+		toneMap = "scale_cuda=format=nv12"
+	}
+	return toneMap + ",hwdownload,format=nv12,format=yuv420p"
+}
+func bitmapOutputFilters(filters []string) []string {
+	return append([]string{"format=nv12", "hwupload_cuda"}, filters...)
+}
+
+func playbackReadRateArgs() []string {
+	return []string{"-readrate", "2", "-readrate_initial_burst", "16", "-readrate_catchup", "2.25"}
 }

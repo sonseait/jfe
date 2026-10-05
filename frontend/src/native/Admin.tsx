@@ -749,16 +749,13 @@ function UserForm({ value, close }: { value: DTO<'UserDTO'> | null; close: () =>
           )}
           {!admin && (
             <MultiSelect
-              label={t('audioUI.importPermission')}
-              description={t('audioUI.permissionHelp')}
+              label={t('subtitleEditor.editPermission')}
+              description={t('subtitleEditor.permissionHelp')}
               value={importIDs.filter((id) => ids.includes(id))}
               onChange={setImportIDs}
               data={
                 libraries.data?.items
-                  .filter(
-                    (l) =>
-                      ids.includes(l.id) && ['music', 'podcasts', 'audiobooks'].includes(l.kind),
-                  )
+                  .filter((l) => ids.includes(l.id))
                   .map((l) => ({ value: l.id, label: l.name })) ?? []
               }
             />
@@ -1179,7 +1176,11 @@ function TaskCard({ job }: { job: DTO<'JobDTO'> }) {
         ? t('metadata.providerUnavailable')
         : ['youtube_preview', 'youtube_download', 'audio_tags'].includes(job.kind)
           ? t(audioErrorKey(job.error))
-          : job.error;
+          : job.kind === 'subtitle_sync' && job.error
+            ? t(
+                `subtitleEditor.reason.${job.error.startsWith('subtitle_') || ['disabled', 'permission', 'read_only', 'hardlinked'].includes(job.error) ? job.error : 'subtitle_job_failed'}`,
+              )
+            : job.error;
   return (
     <article className="task-card">
       <div className="task-main">

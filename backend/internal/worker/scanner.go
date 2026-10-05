@@ -67,7 +67,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 				}
 				return nil
 			}
-			if !media.IsVideo(path) {
+			if strings.HasPrefix(entry.Name(), ".jfe-") || !media.IsVideo(path) {
 				return nil
 			}
 			real, e := media.Within(root, path)
@@ -93,13 +93,18 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			return e
 		}
 		e = func() error {
+			unlock, err := audio.Lock(ctx, w.Config.CacheRoot, real)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			stat, e := os.Stat(real)
 			if e != nil {
 				return e
 			}
 			old, e := w.DB.FileByPath(ctx, store.FileByPathParams{Path: real, LibraryID: id})
 			var probe media.Probe
-			cached := e == nil && old.Size == stat.Size() && old.ModifiedAt == stat.ModTime().UnixNano() && json.Unmarshal(old.Probe, &probe) == nil && probe.Version >= 3
+			cached := e == nil && old.Size == stat.Size() && old.ModifiedAt == stat.ModTime().UnixNano() && json.Unmarshal(old.Probe, &probe) == nil && probe.Version >= media.ProbeVersion
 			if cached {
 				// Rebuild sidecars each scan even when the video itself has not changed.
 				streams := probe.Streams[:0]
@@ -141,29 +146,10 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 				return e
 			}
 
-			base := strings.TrimSuffix(real, filepath.Ext(real))
-			siblings, readErr := os.ReadDir(filepath.Dir(real))
-			if readErr != nil {
-				return readErr
+			if e = w.discoverSubtitleSidecars(real, &probe); e != nil {
+				return e
 			}
-			for _, side := range siblings {
-				ext := strings.ToLower(filepath.Ext(side.Name()))
-				if side.IsDir() || (ext != ".srt" && ext != ".vtt" && ext != ".ass" && ext != ".ssa") {
-					continue
-				}
-				sidePath := filepath.Join(filepath.Dir(real), side.Name())
-				stem := strings.TrimSuffix(sidePath, ext)
-				if stem != base && !strings.HasPrefix(stem, base+".") {
-					continue
-				}
-				safe, pathErr := media.Within(w.Config.MediaRoot, sidePath)
-				if pathErr != nil {
-					continue
-				}
-				lang := strings.TrimPrefix(strings.TrimPrefix(stem, base), ".")
-				probe.Streams = append(probe.Streams, media.Stream{Index: 10000 + len(probe.Streams), Type: "subtitle", Codec: strings.TrimPrefix(ext, "."), ExternalPath: safe, Tags: map[string]string{"language": lang}})
-			}
-			w.prepareTextSubtitles(ctx, stable("file", id, real), real, &probe)
+			w.prepareTextSubtitles(ctx, stable("file", id, real), real, &probe, cached)
 			b, _ := json.Marshal(probe)
 			if e = w.DB.SaveFile(ctx, store.SaveFileParams{ID: stable("file", id, real), ItemID: itemID, Path: real, Size: stat.Size(), ModifiedAt: stat.ModTime().UnixNano(), Duration: probe.Duration(), Probe: b}); e != nil {
 				return e

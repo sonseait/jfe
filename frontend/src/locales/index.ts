@@ -127,6 +127,128 @@ const strings: Record<string, [string, string]> = {
   'playerMetrics.downloadSpeed': ['Download speed', 'Tốc độ tải'],
   'playerMetrics.unavailable': ['No measurement yet', 'Chưa có số liệu'],
   'playerSub.buffering': ['Preparing playback…', 'Đang chuẩn bị phát…'],
+  'native.job.subtitle_sync': ['Subtitle source editing', 'Chỉnh sửa nguồn phụ đề'],
+  'subtitleEditor.title': ['Manage subtitles', 'Quản lý phụ đề'],
+  'subtitleEditor.play': ['Play preview', 'Phát preview'],
+  'subtitleEditor.file': ['Video file', 'File video'],
+  'subtitleEditor.seek': ['Seek preview', 'Tua preview'],
+  'subtitleEditor.mute': ['Toggle preview sound', 'Bật/tắt âm thanh preview'],
+  'subtitleEditor.editPermission': [
+    'Import and media editing permission',
+    'Quyền import và chỉnh sửa media',
+  ],
+  'subtitleEditor.permissionHelp': [
+    'Allows audio tag edits and subtitle changes in the granted libraries.',
+    'Cho phép sửa tag audio và phụ đề trong thư viện được cấp quyền.',
+  ],
+  'subtitleEditor.sidecar': ['External file', 'File phụ đề rời'],
+  'subtitleEditor.embedded': ['Embedded track', 'Track nhúng'],
+  'subtitleEditor.empty': ['No subtitle sources found', 'Không tìm thấy nguồn phụ đề'],
+  'subtitleEditor.preparing': ['Preparing subtitle preview…', 'Đang chuẩn bị preview phụ đề…'],
+  'subtitleEditor.saving': ['Updating original source…', 'Đang cập nhật nguồn gốc…'],
+  'subtitleEditor.negative': [
+    'Cannot save: the earliest allowed offset is {{minimum}} seconds.',
+    'Không thể lưu: offset nhỏ nhất cho phép là {{minimum}} giây.',
+  ],
+  'subtitleEditor.assPreview': [
+    'Preview shows plain text; the original ASS/SSA styling is preserved when saving.',
+    'Preview hiển thị text giản lược; khi lưu vẫn giữ styling ASS/SSA gốc.',
+  ],
+  'subtitleEditor.cues': ['{{count}} subtitle cues', '{{count}} câu phụ đề'],
+  'subtitleEditor.current': ['Current cue', 'Câu đang phát'],
+  'subtitleEditor.shared': [
+    'Original source · shared by all viewers',
+    'Nguồn gốc · dùng chung cho mọi người',
+  ],
+  'subtitleEditor.save': ['Save to original file', 'Lưu vào file gốc'],
+  'subtitleEditor.delete': ['Delete subtitle source', 'Xóa nguồn phụ đề'],
+  'subtitleEditor.deleted': ['Subtitle source deleted', 'Đã xóa nguồn phụ đề'],
+  'subtitleEditor.discard': ['Discard changes', 'Bỏ thay đổi'],
+  'subtitleEditor.confirmSave': [
+    'Overwrite the timing of “{{track}}” in “{{file}}” by {{offset}} seconds? This affects all viewers. No backup is kept after completion.',
+    'Ghi đè timing của “{{track}}” trong “{{file}}” với offset {{offset}} giây? Thay đổi áp dụng cho mọi người. Không giữ backup sau khi hoàn tất.',
+  ],
+  'subtitleEditor.confirmDelete': [
+    'Delete “{{track}}” from “{{file}}”? The embedded track or external subtitle file will be removed for all viewers, including future burn-in playback. No backup is kept.',
+    'Xóa “{{track}}” khỏi “{{file}}”? Track nhúng hoặc file phụ đề rời sẽ bị xóa cho mọi người, kể cả khi burn-in về sau. Không giữ backup.',
+  ],
+  'subtitleEditor.confirmDiscard': [
+    'Discard the unsaved subtitle offset?',
+    'Bỏ offset phụ đề chưa lưu?',
+  ],
+  'subtitleEditor.preview_failed': [
+    'Preview could not play. Reload the subtitle source to retry.',
+    'Không phát được preview. Tải lại nguồn phụ đề để thử lại.',
+  ],
+  'subtitleEditor.transcoding_disabled': [
+    'This video needs transcoding for preview. Enable NVIDIA transcoding on the server.',
+    'Video cần transcoding để preview. Hãy bật NVIDIA transcoding trên server.',
+  ],
+  'subtitleEditor.reason.permission': [
+    'Subtitle editing permission is required',
+    'Cần quyền chỉnh sửa phụ đề',
+  ],
+  'subtitleEditor.reason.disabled': [
+    'Subtitle editing is disabled on the server',
+    'Server chưa bật chỉnh sửa phụ đề',
+  ],
+  'subtitleEditor.reason.worker_unavailable': [
+    'Subtitle scanner is unavailable',
+    'Scanner phụ đề chưa sẵn sàng',
+  ],
+  'subtitleEditor.reason.unsupported_container': [
+    'Editing embedded subtitles currently requires MKV',
+    'Hiện chỉ chỉnh sửa được phụ đề nhúng trong MKV',
+  ],
+  'subtitleEditor.reason.mkv_unavailable': [
+    'MKVToolNix is unavailable on the scanner',
+    'Scanner chưa có MKVToolNix',
+  ],
+  'subtitleEditor.reason.bitmap': [
+    'Image subtitles can be deleted, but timing sync is not supported yet.',
+    'Có thể xóa phụ đề ảnh; chưa hỗ trợ sync timing.',
+  ],
+  'subtitleEditor.reason.read_only': [
+    'Scanner needs write permission to the original file and its directory',
+    'Scanner cần quyền ghi vào file gốc và thư mục chứa file',
+  ],
+  'subtitleEditor.reason.hardlinked': [
+    'Hardlinked files cannot be edited',
+    'Không chỉnh sửa được file có hardlink',
+  ],
+  'subtitleEditor.reason.subtitle_changed': [
+    'Source changed. Reload before editing.',
+    'Nguồn đã thay đổi. Hãy tải lại trước khi chỉnh sửa.',
+  ],
+  'subtitleEditor.reason.subtitle_negative_time': [
+    'The offset would produce a negative subtitle timestamp',
+    'Offset sẽ tạo timestamp phụ đề âm',
+  ],
+  'subtitleEditor.reason.subtitle_unsupported_format': [
+    'Unsupported subtitle format or encoding; use UTF-8 SRT/VTT/ASS/SSA',
+    'Định dạng/encoding chưa hỗ trợ; dùng UTF-8 SRT/VTT/ASS/SSA',
+  ],
+  'subtitleEditor.reason.subtitle_playback_busy': [
+    'Stop other playback sessions for this file before editing',
+    'Dừng các phiên phát khác của file này trước khi chỉnh sửa',
+  ],
+  'subtitleEditor.reason.subtitle_busy': [
+    'Another subtitle operation is running or awaiting recovery',
+    'Một thao tác phụ đề khác đang chạy hoặc chờ phục hồi',
+  ],
+  'subtitleEditor.reason.subtitle_verification_failed': [
+    'Output verification failed; the original file was preserved',
+    'Kiểm tra đầu ra thất bại; đã giữ nguyên file gốc',
+  ],
+  'subtitleEditor.reason.subtitle_job_failed': [
+    'Subtitle operation failed. Check scanner logs and reload.',
+    'Thao tác phụ đề thất bại. Kiểm tra log scanner và tải lại.',
+  ],
+  'subtitleEditor.deleteUpload': ['Delete uploaded subtitles', 'Xóa phụ đề đã tải lên'],
+  'subtitleEditor.confirmDeleteUpload': [
+    'Delete this subtitle upload from your account?',
+    'Xóa bản phụ đề tải lên này khỏi tài khoản của bạn?',
+  ],
   'playerSub.upload': ['Upload subtitles', 'Tải phụ đề lên'],
   'playerSub.saved': [
     'Subtitles saved to your account for this file',
@@ -142,7 +264,16 @@ const strings: Record<string, [string, string]> = {
     'Positive: show later. Negative: show earlier.',
     'Số dương: hiện muộn hơn. Số âm: hiện sớm hơn.',
   ],
-  'playerSub.reset': ['Reset timing', 'Đặt lại thời gian'],
+  'playerSub.reset': ['Use timing from file', 'Dùng thời gian từ file'],
+  'playerSub.personalTiming': [
+    'Saved for your account only; the original file stays unchanged.',
+    'Lưu riêng cho tài khoản của bạn, giữ nguyên file gốc.',
+  ],
+  'playerSub.timingRange': ['Timing adjustment range', 'Khoảng chỉnh timing'],
+  'playerSub.timingSaveError': [
+    'Could not save subtitle timing. Try again.',
+    'Không lưu được timing phụ đề. Hãy thử lại.',
+  ],
   'playerSub.loadError': ['Could not load subtitles', 'Không tải được phụ đề'],
   'playerSub.burned': ['Burn-in', 'Burn-in'],
   'playerSub.burnTiming': [
@@ -436,16 +567,24 @@ const strings: Record<string, [string, string]> = {
   'native.nvencCQ': ['NVENC quality (CQ)', 'Chất lượng NVENC (CQ)'],
   'native.gpuDevice': ['NVIDIA GPU index', 'Chỉ số GPU NVIDIA'],
   'native.hdrTranscodingUnavailable': [
-    'This HDR color format cannot be converted to SDR.',
-    'Định dạng màu HDR này chưa thể chuyển sang SDR.',
+    'This HDR color format cannot be converted to SDR. Dolby Vision requires a compatible HDR10 base.',
+    'Định dạng màu HDR này chưa thể chuyển sang SDR. Dolby Vision cần lớp nền HDR10 tương thích.',
+  ],
+  'native.videoGPUFailed': [
+    'NVIDIA video playback failed. Check GPU codec support, the driver and CUDA-capable FFmpeg on the transcoder.',
+    'Phát video bằng NVIDIA thất bại. Kiểm tra codec GPU hỗ trợ, driver và FFmpeg hỗ trợ CUDA trên transcoder.',
+  ],
+  'native.hdrGPUFailed': [
+    'NVIDIA HDR playback failed. Check GPU access, the driver and CUDA-capable FFmpeg on the transcoder.',
+    'Phát HDR bằng NVIDIA thất bại. Kiểm tra quyền truy cập GPU, driver và FFmpeg hỗ trợ CUDA trên transcoder.',
   ],
   'native.transcodingDisabled': [
     'Video transcoding is disabled. Only compatible original video or remux is available.',
     'Đã tắt chuyển mã video. Chỉ phát bản gốc tương thích hoặc remux.',
   ],
   'native.nvencOnly': [
-    'NVIDIA NVENC video encoding only, with no CPU fallback. Requires an NVIDIA GPU and compatible FFmpeg/driver on the transcoder worker. Decoding, filters and audio may use CPU. Disabled mode supports direct play and remux.',
-    'Chỉ mã hóa video bằng NVIDIA NVENC, không fallback sang CPU. Worker transcoder cần GPU NVIDIA và FFmpeg/driver tương thích. Giải mã, bộ lọc và audio có thể dùng CPU. Khi tắt chuyển mã, vẫn hỗ trợ phát trực tiếp và remux.',
+    'NVIDIA NVENC video encoding only, with no CPU fallback. Requires an NVIDIA GPU and compatible FFmpeg/driver on the transcoder worker. Video decoding and resizing use NVIDIA; HDR tone mapping uses CUDA. Subtitles and audio may use CPU. Disabled mode supports direct play and remux.',
+    'Chỉ mã hóa video bằng NVIDIA NVENC, không fallback sang CPU. Worker transcoder cần GPU NVIDIA và FFmpeg/driver tương thích. Giải mã và resize video dùng NVIDIA; chuyển màu HDR dùng CUDA. Phụ đề và audio có thể dùng CPU. Khi tắt chuyển mã, vẫn hỗ trợ phát trực tiếp và remux.',
   ],
   'native.workers': ['Media workers', 'Tiến trình xử lý media'],
   'native.noWorkers': ['No worker is connected.', 'Chưa có tiến trình xử lý kết nối.'],

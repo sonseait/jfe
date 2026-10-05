@@ -103,19 +103,16 @@ and dependencies have been removed.
 ## Checks
 
 ```sh
-make -C backend test lint build
+make -C backend lint build
 make -C frontend check build
 # Install sqlc v1.30.0 before regenerating contracts:
 make -C backend generate
 make -C frontend generate
-pnpm -C frontend exec playwright install chromium
-make -C frontend test-e2e
-# PostgreSQL + actual FFmpeg integration:
-JFE_TEST_DATABASE_URL='postgres://jfe:jfe@localhost:55432/jfe?sslmode=disable' make -C backend test-integration
 ```
 
-E2E uses a disposable database schema and generated media, starts the API, scanner and transcoder
-binaries, and runs desktop/mobile Chromium. It requires migrate, psql and FFmpeg.
+Automated unit, integration and browser tests have been removed at the user's
+request. CI retains build, lint and generated-contract drift checks.
+
 Each directory has its own Makefile; run `make -C backend` or `make -C frontend`
 to list targets. Backend binaries are written to `backend/bin/`. Frontend types
 can also be generated from the running API with
@@ -191,7 +188,11 @@ encoding (resolution changes, subtitle burn-in or unsupported codecs) return
 409 without creating jobs. The worker also rejects queued encoding jobs when
 disabled. NVIDIA mode uses H.264 NVENC with CQ, a GPU index and concurrency
 settings. GPU/driver failure fails playback; there is no CPU video fallback.
-Decoding, filters and AAC audio processing can still use CPU.
+All video transcodes use NVIDIA decoding, CUDA resizing and NVENC encoding;
+HDR additionally uses CUDA tone mapping.
+Missing CUDA filters, GPU access or a compatible decoder/driver fail playback
+with a NVIDIA-specific error. HDR never falls back to software tone mapping.
+Subtitle composition and audio may still use CPU.
 The system transcoding capability reflects the selected mode, not GPU health.
 
 On a Linux NVIDIA host, install the NVIDIA driver and NVIDIA Container Toolkit.
@@ -208,9 +209,16 @@ docker run --rm --gpus all --env-file backend/.env \
 Use the same media/cache mounts on the API and scanner; ensure /cache is writable
 by the image's jfe user. Use your registry image tag if different.
 The image sets NVIDIA_DRIVER_CAPABILITIES=compute,video,utility. Check
-`ffmpeg -encoders` for h264_nvenc and worker logs for driver/session errors.
-To verify actual hardware HLS, run the integration suite on that host with
-`JFE_TEST_NVENC=1` and a disposable JFE_TEST_DATABASE_URL.
+`ffmpeg -encoders` for h264_nvenc and `ffmpeg -filters` for `tonemap_cuda` and
+`scale_cuda`, plus worker logs for driver/session errors. The Docker image pins
+jellyfin-ffmpeg 8.1.3-1 with SHA-256 verification to provide those CUDA filters;
+this is a standalone FFmpeg package, not a Jellyfin server/API dependency.
+Rebuild and redeploy the backend image for this change; the old Debian FFmpeg
+cannot run the new HDR path. A driver compatible with the packaged FFmpeg is required.
+Source/license details are in [backend/THIRD_PARTY.md](backend/THIRD_PARTY.md).
+GPU throughput and visual output require observation on the deployed NVIDIA host.
+Use `nvidia-smi dmon -s u -c 5` and the session's `progress.txt` (fps/speed) to
+inspect actual hardware activity and throughput.
 
 
 ## Audio and YouTube
@@ -230,7 +238,7 @@ to PATH for `yt-dlp`; downloader also needs Node.js 20+ and FFmpeg/ffprobe.
 The Docker image packages these dependencies. `JFE_IMPORT_ROOT` enables a dedicated
 import directory; leaving it empty disables YouTube imports.
 
-Video libraries remain read-only. Mount **audio libraries read-write for scanner**
+Video libraries remain read-only for API/transcoder; scanner also stays read-only unless original subtitle editing is explicitly enabled. Mount **audio libraries read-write for scanner**
 and read-only for API/transcoder. Mount **the import directory read-write for both
 scanner and downloader**, read-only for API/transcoder, at the same absolute path.
 Share PostgreSQL and the cache directory among all four processes. Ensure the
@@ -257,18 +265,72 @@ Video playback defaults to **Auto (network speed)** when NVENC transcoding is
 enabled. It uses measured download throughput to adjust bitrate and resolution
 while preserving the playback position; manual quality choices remain fixed.
 Matching subtitles are selected using the interface language, including
-`vi`/`vie`, Vietnamese and Tiếng Việt labels. Matching uploaded text subtitles
-work with transcoding disabled. Scanner-prepared embedded/sidecar SRT/WebVTT
-also use text overlays; ASS/bitmap burn-in requires NVENC.
+`vi`/`vie`, Vietnamese and Tiếng Việt labels. Uploaded and embedded/sidecar subtitles are rendered into video by FFmpeg.
+All subtitle playback requires NVIDIA transcoding, including SRT/WebVTT.
 
 Video playback now prefers native direct play, then video-copy fragmented MP4
 remux, then NVENC HLS. Browser support is checked against the source profile and
 bit depth, including HEVC Main10. TrueHD/DTS audio can be converted to AAC without
 encoding the HEVC video. HLS is used for video transcoding and legacy clients.
 Apply migration **00008_playback_decision** with `make -C backend migrate`, then
-rescan video libraries to populate probe version 3 and prepare text subtitles.
+rescan video libraries to refresh probe metadata and prepare text subtitles.
+Later scans reuse prepared embedded text subtitles for unchanged videos; changed
+files, sidecars and missing/corrupt cache are refreshed.
 HDR stays copied when the client supports it. Required NVENC transcodes convert
-HDR10/PQ and HLG to limited-range BT.709 SDR using CPU color filters; HDR10+ uses
-its static HDR10 base. FFmpeg must include libzimg (`zscale`), `tonemap`,
-`limiter` and `sidedata`. Dolby Vision conversion remains unavailable. The player
+HDR10/PQ and HLG to limited-range BT.709 SDR using `tonemap_cuda`; HDR10+ uses
+its static HDR10 base. Decode, tone mapping, resize and encode stay on NVIDIA.
+Subtitle rendering downloads SDR frames for CPU libass/bitmap composition and uploads
+them back to the selected GPU. Single-layer Dolby Vision profile 8 with HDR10 base
+compatibility ID 1 uses its HDR10 base and discards Dolby Vision metadata; other
+Dolby Vision formats remain unavailable. Rescan existing libraries after upgrading
+to refresh cached Dolby Vision metadata, then start a new playback session. The player
 reports HDR-to-SDR conversion. See [playback architecture](docs/architecture.md).
+
+
+Transcode generation is capped at 2x media time (the player's maximum speed),
+with a 16-second initial burst and temporary 2.25x catch-up. Direct/remux paths
+are unaffected. The worker writes `progress.txt` in the session cache with
+FFmpeg `fps`/`speed` diagnostics. This caps runaway background generation, not
+the CPU time needed by audio or demuxing; hardware below real-time remains a
+playback bottleneck.
+
+### Personal player subtitle timing
+
+The player's **Subtitle timing** popover uses a slider with ±10/±60/±600-second
+ranges and 0.1-second keyboard steps. Timing changes restart the NVENC session after a short debounce; releasing the
+slider saves the offset to your account for that file and subtitle source. It
+persists across devices and applies to FFmpeg-rendered subtitle
+playback. **Use timing from file** clears the personal offset. Viewing permission
+is sufficient; original files and other users' settings are unchanged. Apply
+migration `00010_personal_subtitle_timing` and deploy API/frontend together.
+Personal timing does not require `JFE_SUBTITLE_EDITING` or writable video mounts.
+
+### Movie and episode subtitle editor
+
+On a movie or episode detail page, **Manage subtitles** opens video preview, seek controls,
+cue timestamps/text, and a global timing slider. Preview changes are local until
+**Save to original file** is confirmed. Positive offsets show subtitles later;
+negative timestamps are rejected. Sync supports UTF-8 SRT/VTT/ASS/SSA sidecars and
+text tracks inside MKV. ASS preview uses plain text; original styling is preserved.
+**Delete subtitle source** removes the selected MKV track (including PGS/DVD) or
+sidecar for all viewers, including future burn-in playback. Image subtitle timing
+sync and removing text already encoded into video pixels are unsupported. Personal
+uploads can be deleted by their owner from the player's subtitle menu.
+
+Run `make -C backend migrate` to apply migration 00009, deploy API/scanner/frontend
+together, and set `JFE_SUBTITLE_EDITING=true` on **API and scanner**. Scanner requires
+write permission on the original video/subtitle files and their directories; keep
+API/transcoder video mounts read-only. For MKV, install `mkvmerge` and `mkvextract`
+(MKVToolNix, included in the backend image). Grant video-library import/edit
+permission through the user editor; administrators are already authorized.
+
+Stop other playback sessions before saving/deleting. Scanner serializes edits
+with scans, checks fingerprints, validates remux payloads/metadata and recovers
+publication journals. MKV operations need space for a complete temporary remux;
+no backup remains after successful publication. Preview prefers direct play/remux;
+unsupported source video requires enabled NVIDIA transcoding, using a bounded
+720p preview. Opening the editor stops the persistent player. Preview heartbeats
+never update watched state or resume position.
+
+See [subtitle editing architecture](docs/subtitle-editor.md) for recovery behavior
+and validation boundaries.

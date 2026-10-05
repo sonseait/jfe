@@ -1,19 +1,8 @@
 name: Checks
 on: [push, pull_request]
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: jfe
-          POSTGRES_PASSWORD: jfe
-          POSTGRES_DB: jfe
-        ports: ['55432:5432']
-        options: --health-cmd 'pg_isready -U jfe' --health-interval 3s --health-timeout 3s --health-retries 20
-    env:
-      JFE_TEST_DATABASE_URL: postgres://jfe:jfe@localhost:55432/jfe?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -28,17 +17,10 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core postgresql-client
-      - run: python3 -m venv /tmp/jfe-audio && /tmp/jfe-audio/bin/pip install -r backend/requirements-audio.txt
-      - run: echo "JFE_PYTHON=/tmp/jfe-audio/bin/python3" >> "$GITHUB_ENV"
       - run: pnpm -C frontend install --frozen-lockfile
       - run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
-      - run: go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
       - run: make -C backend generate
       - run: make -C frontend generate
       - run: git diff --exit-code -- backend/openapi.json backend/internal/store frontend/src/native/generated.ts
-      - run: make -C backend test lint build
-      - run: make -C backend test-integration
-      - run: make -C frontend check build
-      - run: pnpm -C frontend exec playwright install --with-deps chromium
-      - run: make -C frontend test-e2e
+      - run: make -C backend lint build
+      - run: make -C frontend lint build

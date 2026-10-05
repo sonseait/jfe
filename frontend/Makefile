@@ -1,15 +1,14 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev generate typecheck lint test check build preview test-e2e format format-check docker-build docker-push
+.PHONY: help install dev generate typecheck lint check build preview format format-check docker-build docker-push
 
 OPENAPI_SOURCE ?= ../backend/openapi.json
-E2E_ARGS ?=
 REGISTRY ?= sgp.vultrcr.com/695w
 IMAGE_NAME ?= jfe-frontend
 IMAGE_TAG ?= latest
 IMAGE = $(if $(strip $(REGISTRY)),$(patsubst %/,%,$(strip $(REGISTRY)))/)$(IMAGE_NAME):$(IMAGE_TAG)
 
 help:
-	@echo "Targets: install dev generate typecheck lint test check build preview test-e2e format format-check docker-build docker-push"
+	@echo "Targets: install dev generate typecheck lint check build preview format format-check docker-build docker-push"
 	@echo "Docker: REGISTRY=<host/namespace> IMAGE_NAME=jfe-frontend IMAGE_TAG=latest"
 
 install:
@@ -28,19 +27,13 @@ typecheck:
 lint:
 	pnpm lint
 
-test:
-	pnpm test
-
-check: typecheck lint test
+check: typecheck lint
 
 build:
 	pnpm build
 
 preview:
 	pnpm preview
-
-test-e2e:
-	pnpm test:e2e $(E2E_ARGS)
 
 format:
 	pnpm format

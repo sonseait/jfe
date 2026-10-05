@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"html"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -91,4 +92,27 @@ func ParseSubtitles(content string) ([]Cue, error) {
 	}
 	sort.SliceStable(cues, func(i, j int) bool { return cues[i].Start < cues[j].Start })
 	return cues, nil
+}
+
+// SubtitlesSRT serializes stored plain-text cues for FFmpeg/libass playback.
+func SubtitlesSRT(cues []Cue) (string, error) {
+	if len(cues) == 0 || len(cues) > 20000 {
+		return "", fmt.Errorf("invalid subtitle cues")
+	}
+	timestamp := func(seconds float64) string {
+		ms := int64(math.Round(seconds * 1000))
+		return fmt.Sprintf("%02d:%02d:%02d,%03d", ms/3600000, ms/60000%60, ms/1000%60, ms%1000)
+	}
+	var content strings.Builder
+	for i, cue := range cues {
+		if math.IsNaN(cue.Start) || math.IsNaN(cue.End) || math.IsInf(cue.Start, 0) || math.IsInf(cue.End, 0) || cue.Start < 0 || cue.End <= cue.Start || cue.End > 3600000 || len(cue.Text) > 8192 || !utf8.ValidString(cue.Text) || strings.ContainsRune(cue.Text, 0) {
+			return "", fmt.Errorf("invalid subtitle cue")
+		}
+		// Escape markup: uploaded cues are plain text, not SRT/ASS commands.
+		text := html.EscapeString(cue.Text)
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+		text = strings.Join(strings.FieldsFunc(text, func(r rune) bool { return r == '\n' }), "\n")
+		fmt.Fprintf(&content, "%d\n%s --> %s\n%s\n\n", i+1, timestamp(cue.Start), timestamp(cue.End), text)
+	}
+	return content.String(), nil
 }

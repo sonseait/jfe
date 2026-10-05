@@ -18,6 +18,7 @@ type SubtitleUpload struct {
 	Content string `json:"content" jsonschema:"minLength=1,maxLength=524288"`
 }
 type SubtitleDTO struct {
+	Uploaded bool   `json:"uploaded,omitempty"`
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	CueCount int    `json:"cueCount"`
@@ -61,7 +62,7 @@ func (s *Server) subtitleRoutes() {
 		}
 		rows, err := s.DB.ListSubtitles(ctx, store.ListSubtitlesParams{FileID: in.Params.ID, UserID: route.User(ctx).ID})
 		for _, row := range rows {
-			v.Items = append(v.Items, SubtitleDTO{row.ID, row.Name, int(row.CueCount)})
+			v.Items = append(v.Items, SubtitleDTO{ID: row.ID, Name: row.Name, CueCount: int(row.CueCount), Uploaded: true})
 		}
 		return out(v, err)
 	})
@@ -83,7 +84,7 @@ func (s *Server) subtitleRoutes() {
 			return out(SubtitleDTO{}, err)
 		}
 		row, err := s.DB.SaveSubtitle(ctx, store.SaveSubtitleParams{ID: uuid.NewString(), FileID: in.Params.ID, UserID: route.User(ctx).ID, Name: name, Cues: data})
-		return out(SubtitleDTO{row.ID, row.Name, int(row.CueCount)}, err)
+		return out(SubtitleDTO{ID: row.ID, Name: row.Name, CueCount: int(row.CueCount), Uploaded: true}, err)
 	})
 	route.Get(s.Routes, op("/files/:id/subtitles/:subtitleId", "getSubtitle", "user"), func(ctx context.Context, in route.Input[route.Empty, route.Empty, SubtitleParams]) (route.Output[SubtitleDocument], error) {
 		v := SubtitleDocument{}

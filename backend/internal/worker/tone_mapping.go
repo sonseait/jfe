@@ -8,6 +8,12 @@ import (
 )
 
 func requireToneMappingFilters(ctx context.Context) error {
+	return requireGPUFilters(ctx, []string{"tonemap_cuda", "scale_cuda", "sidedata", "setparams", "hwdownload", "hwupload_cuda"})
+}
+func requireCUDAPlaybackFilters(ctx context.Context) error {
+	return requireGPUFilters(ctx, []string{"scale_cuda", "hwdownload", "hwupload_cuda"})
+}
+func requireGPUFilters(ctx context.Context, required []string) error {
 	data, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-filters").Output()
 	if err != nil {
 		return fmt.Errorf("inspect FFmpeg tone mapping filters: %w", err)
@@ -19,9 +25,9 @@ func requireToneMappingFilters(ctx context.Context) error {
 			available[fields[1]] = true
 		}
 	}
-	for _, filter := range []string{"zscale", "tonemap", "sidedata", "limiter"} {
+	for _, filter := range required {
 		if !available[filter] {
-			return fmt.Errorf("HDR tone mapping requires FFmpeg filter %s; install FFmpeg with libzimg", filter)
+			return fmt.Errorf("NVIDIA playback requires FFmpeg filter %s; install the pinned CUDA-capable FFmpeg from the JFE image", filter)
 		}
 	}
 	return nil

@@ -6,8 +6,10 @@ import (
 )
 
 // ToneMappingFilter converts the static HDR base image to limited-range BT.709
-// SDR. It is a CPU filter chain; playback video encoding must still use NVENC.
-// Dolby Vision requires RPU-aware processing and cannot use this base-image path.
+// SDR on CUDA frames. Playback requires NVIDIA decode, tone mapping and NVENC;
+// there is no software tone-mapping fallback.
+// Compatible single-layer Dolby Vision profile 8 uses only its HDR10 base;
+// Dolby Vision dynamic metadata is not applied. Other profiles remain rejected.
 func ToneMappingFilter(s Stream) (string, error) {
 	hdr := s.HDRFormat()
 	if hdr == "" {
@@ -15,6 +17,10 @@ func ToneMappingFilter(s Stream) (string, error) {
 	}
 	transfer := "smpte2084"
 	switch hdr {
+	case "dolby_vision":
+		if !s.DolbyVisionHDR10Base() {
+			return "", fmt.Errorf("Dolby Vision has no supported HDR10 base")
+		}
 	case "hlg":
 		transfer = "arib-std-b67"
 	case "hdr10", "hdr10plus":
@@ -47,21 +53,18 @@ func ToneMappingFilter(s Stream) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported HDR color range: %s", s.ColorRange)
 	}
-	return strings.Join([]string{
-		fmt.Sprintf("zscale=primariesin=%s:transferin=%s:matrixin=%s:rangein=%s:transfer=linear:npl=100", primaries, transfer, matrix, inputRange),
-		"format=gbrpf32le",
-		"zscale=primaries=bt709",
-		// Auto peak uses mastering/content-light frame metadata when available.
-		"tonemap=tonemap=hable:desat=2:peak=0",
-		"zscale=transfer=bt709:matrix=bt709:range=limited",
-		"format=yuv420p",
-		// Misreported source peak metadata must not produce out-of-range SDR.
-		"limiter=min=16:max=235:planes=1",
-		"limiter=min=16:max=240:planes=6",
+	filters := []string{
+		// setparams changes frame metadata only, leaving pixels on the GPU.
+		fmt.Sprintf("setparams=range=%s:color_primaries=%s:color_trc=%s:colorspace=%s", inputRange, primaries, transfer, matrix),
+		// Use the HDR10 base only, even if a decoder provides Dolby Vision RPU.
+		"tonemap_cuda=tonemap=hable:desat=2:peak=0:format=nv12:primaries=bt709:transfer=bt709:matrix=bt709:range=tv:apply_dovi=0",
 		"sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA",
 		"sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL",
 		"sidedata=mode=delete:type=DYNAMIC_HDR_PLUS",
-	}, ","), nil
+		"sidedata=mode=delete:type=DOVI_RPU_BUFFER",
+		"sidedata=mode=delete:type=DOVI_METADATA",
+	}
+	return strings.Join(filters, ","), nil
 }
 func containsColor(values []string, value string) bool {
 	for _, v := range values {

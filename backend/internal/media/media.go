@@ -50,7 +50,11 @@ type Stream struct {
 	ColorRange       string `json:"color_range,omitempty"`
 	ColorTransfer    string `json:"color_transfer,omitempty"`
 	SideData         []struct {
-		Type string `json:"side_data_type"`
+		Type              string `json:"side_data_type"`
+		DVProfile         int    `json:"dv_profile,omitempty"`
+		BLPresent         int    `json:"bl_present_flag,omitempty"`
+		ELPresent         *int   `json:"el_present_flag,omitempty"`
+		BLCompatibilityID int    `json:"dv_bl_signal_compatibility_id,omitempty"`
 	} `json:"side_data_list,omitempty"`
 	BitRate      Scalar            `json:"bit_rate,omitempty"`
 	PixelFormat  string            `json:"pix_fmt,omitempty"`
@@ -65,6 +69,10 @@ type Stream struct {
 		AttachedPic int `json:"attached_pic"`
 	} `json:"disposition"`
 }
+
+// ProbeVersion invalidates cached probes when persisted stream metadata changes.
+const ProbeVersion = 4
+
 type Probe struct {
 	Version  int       `json:"probe_version,omitempty"`
 	Streams  []Stream  `json:"streams"`
@@ -97,7 +105,7 @@ func Inspect(ctx context.Context, path string) (Probe, error) {
 		return p, fmt.Errorf("ffprobe failed: %w", err)
 	}
 	err = json.Unmarshal(b, &p)
-	p.Version = 3
+	p.Version = ProbeVersion
 	return p, err
 }
 func Within(root, path string) (string, error) {

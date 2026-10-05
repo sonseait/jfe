@@ -20,6 +20,9 @@ remains the accepted scope; this document tracks implementation.
 3. scanner claims scan/metadata jobs from PostgreSQL, resolves paths within the
    configured media root, probes files and updates catalog records. Rescans
    reuse unchanged video probe data but rediscover subtitles/local metadata.
+   Prepared embedded text subtitles reuse valid cache when the video fingerprint
+   is unchanged; missing/corrupt cache and changed sources are extracted again.
+   External sidecars are refreshed independently of the video fingerprint.
    Only a successful complete scan marks missing files unavailable. Discovery
    deduplicates resolved paths before probing. Jobs report processed/total video
    files through lease-fenced updates; progress stays below 100 until completion.
@@ -53,13 +56,25 @@ remains the accepted scope; this document tracks implementation.
    Unsupported video, requested lower resolution/bitrate, subtitle burn-in or
    explicit decode fallback require NVENC. Capability-aware conversion outputs
    H.264/AAC HLS even when the legacy output setting is HEVC. Video encoding has
-   no CPU fallback. Required HDR10/PQ and HLG transcodes use CPU zscale/tonemap
-   filters followed by NVENC, converting to limited-range 8-bit BT.709 SDR.
+   no CPU fallback. Required HDR10/PQ and HLG transcodes use a named CUDA device
+   for NVDEC, `tonemap_cuda`, `scale_cuda` and NVENC, converting to limited-range
+   8-bit BT.709 SDR. Metadata filters leave the pixels on GPU. No CPU tone-map
+   fallback is available. With text/ASS/bitmap burn-in, SDR frames are downloaded for
+   CPU subtitle composition and uploaded to the same device; bitmap resize
+   follows overlay to retain original subtitle coordinates.
    HDR10+ uses its static HDR10 base; dynamic metadata is not applied. Dolby
-   Vision conversion is rejected because it requires RPU-aware processing.
+   Vision profile 8 with an explicitly signaled HDR10-compatible base (compatibility
+   ID 1, base present, enhancement layer absent, PQ transfer) uses that base only.
+   Dolby Vision RPU/frame metadata is removed; dynamic Dolby Vision processing
+   is not performed. Other Dolby Vision streams remain rejected. Probe version 4
+   retains the compatibility fields; a library rescan refreshes older cached probes.
    Direct/remux HDR remains untouched when supported by the client. The worker
    independently checks source HDR metadata and required filters, including
-   libzimg-backed zscale, before encoding. Tone mapping precedes subtitle
+   `tonemap_cuda` and `scale_cuda`, before encoding. The image pins a checksum-verified
+   standalone FFmpeg build with these CUDA filters; old Debian FFmpeg is unsupported
+   for GPU conversion. SDR transcodes also use CUDA decode/resize rather than the
+   software HEVC decoder/scale filter. Hardware/driver failure fails the session and the player
+   shows an HDR-specific NVIDIA error. Tone mapping precedes subtitle
    composition; SDR output strips mastering/content-light/HDR10+ frame metadata
    and sets explicit BT.709 color tags. Decisions and stream reports include
    toneMapped, shown in the player. Rescan libraries to refresh cached colors.
@@ -70,7 +85,8 @@ remains the accepted scope; this document tracks implementation.
    writes. See audio.md for permissions, publication recovery and dependencies.
 6. Workers use PostgreSQL leases, heartbeats and bounded attempts. The processes
    share media and writable cache paths on the same host. Video media stays
-   read-only; scanner needs writable audio mounts, and scanner/downloader share
+   read-only for API/transcoder; scanner needs writable audio mounts and optionally
+   writable video directories for explicit subtitle edits, and scanner/downloader share
    a writable import volume. API/transcoder read media and imports only. Encoding
    concurrency is coordinated through a PostgreSQL advisory transaction lock.
    Playback stop/expiry and job-context cancellation finish as cancelled with an
@@ -97,11 +113,11 @@ remains the accepted scope; this document tracks implementation.
 - Player seeking retains the last decoded frame while a new HLS session prepares,
   with a compact loading indicator. UTF-8 SRT/VTT uploads are stored as plain-text
   cues in PostgreSQL per account/file, protected by library access and ownership.
-  Uploaded subtitles render without video encoding and support immediate timing
-  adjustment. Burn-in timing changes restart NVENC after a short debounce.
+  Uploaded subtitles render through FFmpeg/libass with the same style as embedded
+  text burn-in. All subtitle timing changes restart NVENC after a short debounce.
   Positive delay shows subtitles later. ASS styling is not preserved by uploads;
-  uploaded captions are an HTML overlay and are not visible in native video-only
-  fullscreen/PiP. See seek-previews.md for thumbnail hover research.
+  captions are part of the video and accompany native fullscreen, PiP and cast
+  when the receiver supports the playback stream. See seek-previews.md for thumbnail hover research.
 - The seek track draws actual HTML media buffered ranges, including gaps and
   HLS session offsets. Loading shows measured segment transfer speed (bytes/sec)
   from hls.js loader stats. Native playback uses completed Resource Timing entries
@@ -115,7 +131,7 @@ remains the accepted scope; this document tracks implementation.
   root to avoid clipping while remaining visible in fullscreen. Seek and
   volume tracks share a slim 3px appearance. Subtitle upload lives in the subtitle
   menu, adds the saved track and selects it. A timing button in the existing control
-  row opens a popover for delay/reset and burn-in notes; enabling subtitles or
+  row opens a slider popover for personal delay/file-default reset and burn-in notes; enabling subtitles or
   opening timing never adds a row or changes the video height. Popovers remain
   inside the fullscreen player and timing supports Escape/focus trapping.
 - A playback indicator uses the worker output report to confirm video encoding,
@@ -211,7 +227,7 @@ reading encoding settings or parsing those settings failed.
 Video encoding modes are disabled (default) and nvidia. API negotiation rejects
 encoding while disabled, and the worker rechecks settings before starting FFmpeg.
 Only h264_nvenc is used for video encoding; GPU failures never use CPU fallback.
-Decoding, filters and AAC audio can use CPU. See README for NVIDIA deployment.
+All video transcodes use CUDA decode/resize and NVENC; subtitle composition and AAC audio can use CPU. See README for NVIDIA deployment.
 
 ## General administration settings
 
@@ -325,7 +341,7 @@ successful video progress save.
 Playback preferences use the interface language until the viewer chooses a
 subtitle manually, including Off. Language matching normalizes accents/case and
 token boundaries for English/Vietnamese codes and labels. Matching uploaded text
-overlays take priority over matching embedded/sidecar tracks; burn-in is gated
+subtitles take priority over matching embedded/sidecar tracks; all subtitles are gated
 by the transcoding capability. Playback waits for the initial capability and
 subtitle queries so it does not first launch an unwanted session.
 
@@ -372,10 +388,43 @@ keyframe granularity. Transcode seeks retain the existing HLS session behavior.
 
 Scanner prepares SRT/WebVTT embedded/sidecar tracks as bounded plain-text cue
 files in shared cache/subtitles, atomically published and listed through the
-existing subtitle API. The existing frontend overlay uses them with all playback
-modes and encoding disabled. The API checks file/library access before reading
-prepared cues. Subtitle extraction failure leaves explicit burn-in available when
-NVENC is enabled. ASS styling and bitmap subtitles retain explicit burn-in;
-uploaded SRT/WebVTT still use the existing per-account database storage. Text
-subtitles over 512 KiB are not prepared. Overlay captions have the same existing
-native-video fullscreen/PiP limitation as uploaded text captions.
+existing subtitle API. Prepared embedded text cues are reused for FFmpeg rendering
+without rereading the entire movie. Sidecars render from their original files to
+preserve formatting; unavailable embedded caches fall back to the original track. Uploaded SRT/WebVTT
+remain stored per account in PostgreSQL; the transcoder verifies file and session
+ownership, writes a session-local SRT, converts it to ASS, and uses the same libass
+filter/style and delay as embedded text burn-in. No FFmpeg runs in HTTP requests.
+All subtitle playback requires NVENC; there is no browser overlay in the player.
+Text subtitles over 512 KiB are not prepared. The editor retains a local HTML
+preview for immediate timing feedback, which is approximate rather than libass.
+
+
+
+Original subtitle management is documented in [subtitle-editor.md](subtitle-editor.md).
+The editor's source-management endpoints use typed routes and scanner jobs; upload
+deletion is owner-scoped. `JFE_SUBTITLE_EDITING` enables a deliberate scanner-only
+exception to read-only video mounts. Preview sessions are marked in PostgreSQL so
+progress calls only renew playback and cannot change user watch state.
+
+
+Personal subtitle timing uses typed GET/PUT `/files/:id/subtitle-timing` routes
+and PostgreSQL `personal_subtitle_timing` (migration 00010). Access follows viewing
+permissions, independent of original editing. Keys isolate users/files/sources;
+original track and prepared-ID aliases share a source offset. Probed track-list revisions
+prevent stale selection writes and invalidate offsets after track remapping.
+Original subtitle publication atomically clears original-source offsets with the
+catalog refresh; personal uploads retain their offsets. The frontend applies
+saved milliseconds to the NVENC subtitle delay parameter. Slider
+changes are local until release; queued saves are serialized and retain the
+initiating account's credential. Errors are shown rather than reporting success.
+
+## Playback generation pacing
+
+Video transcodes read at up to 2x media time, with a 16-second startup burst and
+2.25x temporary catch-up. This matches the native player's maximum 2x speed and
+avoids unbounded full-speed background encoding. Input pacing flags precede the
+input file; direct play, video-copy remux and audio-only conversion are unchanged.
+FFmpeg writes one-second machine-readable progress (fps/speed) in the playback
+cache, removed with the session. The limit does not bound the buffer during pause;
+CPU demux/audio work and NVIDIA session overhead remain. Real-time capability and
+speed at 2x still depend on hardware and storage.

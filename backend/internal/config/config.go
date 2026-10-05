@@ -13,6 +13,7 @@ type Config struct {
 	Concurrency                                          int
 	ImportRoot                                           string
 	Python                                               string
+	SubtitleEditing                                      bool
 }
 
 func Load() (Config, error) {
@@ -28,6 +29,7 @@ func Load() (Config, error) {
 	v.SetDefault("JFE_CONCURRENCY", 1)
 	v.SetDefault("JFE_IMPORT_ROOT", "")
 	v.SetDefault("JFE_PYTHON", "python3")
+	v.SetDefault("JFE_SUBTITLE_EDITING", false)
 	v.SetDefault("TMDB_TOKEN", "")
 	v.SetDefault("JFE_LOG_LEVEL", "info")
 	v.SetDefault("JFE_LOG_FORMAT", "json")
@@ -40,7 +42,8 @@ func Load() (Config, error) {
 		n = 1
 	}
 	return Config{
-		ImportRoot: v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),
+		SubtitleEditing: v.GetBool("JFE_SUBTITLE_EDITING"),
+		ImportRoot:      v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),
 		DatabaseURL: v.GetString("DATABASE_URL"), Listen: v.GetString("JFE_LISTEN"),
 		MediaRoot: v.GetString("JFE_MEDIA_ROOT"), CacheRoot: v.GetString("JFE_CACHE_ROOT"),
 		TMDBToken: v.GetString("TMDB_TOKEN"), Concurrency: n,

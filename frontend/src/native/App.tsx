@@ -1,3 +1,4 @@
+import { SubtitleManagerButton } from './SubtitleEditor';
 import Libraries from './Libraries';
 import AudioPlayer, { isAudioItem, isAudioGroup, useAudioPlayer } from './AudioPlayer';
 import { AudioDetail, Imports, AudioArtists } from './Audio';
@@ -174,7 +175,7 @@ function Login({ system }: { system: DTO<'SystemDTO'> }) {
     </div>
   );
 }
-function Shell({ user, serverName }: { user: DTO<'UserDTO'>; serverName: string }) {
+function Shell({ user }: { user: DTO<'UserDTO'>; serverName: string }) {
   const { t } = useTranslation();
   const nav = [
     [Compass, 'home', '/'],
@@ -669,6 +670,13 @@ function Detail() {
                   >
                     {t(item.watched ? 'markUnwatched' : 'markWatched')}
                   </Button>
+                  {(item.kind === 'episode' || item.kind === 'movie') && detail.data && (
+                    <SubtitleManagerButton
+                      key={`${item.id}:${activeFile?.id}`}
+                      files={detail.data.files}
+                      initialFileId={activeFile?.id}
+                    />
+                  )}
                   {admin && (
                     <Button variant="default" onClick={() => setEdit(true)}>
                       {t('editMetadata')}

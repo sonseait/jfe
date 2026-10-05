@@ -298,6 +298,8 @@ type PlaybackDecisionDTO struct {
 	Reason         string       `json:"reason"`
 }
 type PlaybackRequest struct {
+	SubtitleID     string                   `json:"subtitleId,omitempty" jsonschema:"format=uuid"`
+	Preview        bool                     `json:"preview,omitempty"`
 	Capabilities   *PlaybackCapabilitiesDTO `json:"capabilities,omitempty"`
 	AutoQuality    bool                     `json:"autoQuality,omitempty"`
 	ForceTranscode bool                     `json:"forceTranscode,omitempty"`

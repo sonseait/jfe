@@ -1,3 +1,4 @@
+import { usePersonalSubtitleTiming } from './personal-subtitle-timing';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Alert, Button, Group, Loader, Menu, ScrollArea, Slider } from '@mantine/core';
 import {
@@ -34,7 +35,7 @@ import {
   hasSegment,
 } from './playback-metrics';
 import { useDebouncedValue } from '@mantine/hooks';
-import { SubtitleOverlay, SubtitleTiming, SubtitleUpload } from './Subtitles';
+import { SubtitleTiming, SubtitleUpload, UploadedSubtitleDelete } from './Subtitles';
 import { StreamIndicator } from './StreamIndicator';
 import { queryClient } from '../lib/query-client';
 import { api, result, useAuth, useResource, type DTO } from './api';
@@ -156,7 +157,6 @@ function Surface() {
   const [fullscreen, setFullscreen] = useState(false);
   const [audio, setAudio] = useState('-1');
   const [subtitleChoice, setSubtitle] = useState<string | null>(null);
-  const [subtitleDelay, setSubtitleDelay] = useState(0);
   const subtitles = useResource(
     ['subtitles', state.fileId],
     async (signal) =>
@@ -176,6 +176,8 @@ function Surface() {
     ? subtitle.slice(7)
     : (file?.tracks.find((track) => track.index === Number(subtitle) && track.type === 'subtitle')
         ?.subtitleId ?? '');
+  const personalTiming = usePersonalSubtitleTiming(state.fileId, subtitle);
+  const subtitleDelay = personalTiming.value;
   const [quality, setQuality] = useState('auto');
   const [autoQuality, setAutoQuality] = useState(() =>
     file ? selectAutoQuality(file, networkDownlink()) : { maxHeight: 0 as const, maxBitrate: 0 },
@@ -190,7 +192,7 @@ function Surface() {
     file && file.duration > 0 ? Math.min(100000000, Math.ceil((file.size * 8) / file.duration)) : 0;
   const automaticBitrate =
     canTranscode && quality === 'auto'
-      ? autoQuality.maxBitrate || (!uploadedId && subtitle !== '-1' ? sourceBitrate : 0)
+      ? autoQuality.maxBitrate || (subtitle !== '-1' ? sourceBitrate : 0)
       : 0;
   const sampleQuality = useRef<(rate: number | null, speed: number) => void>(() => {});
   sampleQuality.current = (rate, speed) => {
@@ -205,8 +207,10 @@ function Surface() {
     }
   };
   const effectiveSubtitle = canTranscode && !uploadedId ? subtitle : '-1';
+  const effectiveSubtitleID = canTranscode ? uploadedId : '';
+  const hasBurnedSubtitle = effectiveSubtitle !== '-1' || Boolean(effectiveSubtitleID);
   const [burnDelay] = useDebouncedValue(subtitleDelay, 500);
-  const effectiveBurnDelay = effectiveSubtitle === '-1' ? 0 : burnDelay;
+  const effectiveBurnDelay = hasBurnedSubtitle ? burnDelay : 0;
   const [revision, setRevision] = useState(0);
   const [offset, setOffset] = useState(0);
   const [volume, setVolume] = useState(0.8);
@@ -226,7 +230,15 @@ function Surface() {
     if (!auth) useNativePlayer.getState().stop();
   }, [auth]);
   useEffect(() => {
-    if (!state.fileId || !video.current || !auth || system.isLoading || subtitles.isLoading) return;
+    if (
+      !state.fileId ||
+      !video.current ||
+      !auth ||
+      system.isLoading ||
+      subtitles.isLoading ||
+      personalTiming.loading
+    )
+      return;
     const el = video.current;
     const frozen = frame.current;
     const headers = { Authorization: `Bearer ${auth}` };
@@ -431,6 +443,7 @@ function Surface() {
             autoQuality: canTranscode && quality === 'auto',
             audioIndex: Number(audio),
             subtitleIndex: Number(effectiveSubtitle),
+            ...(effectiveSubtitleID ? { subtitleId: effectiveSubtitleID } : {}),
             subtitleDelay: effectiveBurnDelay,
             maxBitrate:
               quality === 'auto'
@@ -482,7 +495,14 @@ function Surface() {
           );
         }
         if (cancelled) return;
-        if (session.state !== 'ready') throw new Error('native.playbackFailed');
+        if (session.state !== 'ready')
+          throw new Error(
+            session.decision?.toneMapped
+              ? 'native.hdrGPUFailed'
+              : session.method === 'transcode'
+                ? 'native.videoGPUFailed'
+                : 'native.playbackFailed',
+          );
         setMethod(session.method);
         setStreamInfo(session.stream);
         if (
@@ -649,12 +669,14 @@ function Surface() {
     auth,
     audio,
     effectiveSubtitle,
+    effectiveSubtitleID,
     effectiveBurnDelay,
     effectiveQuality,
     automaticBitrate,
     quality,
     system.isLoading,
     subtitles.isLoading,
+    personalTiming.loading,
     revision,
     fallback,
     file,
@@ -739,14 +761,6 @@ function Surface() {
           }}
         />
         <canvas ref={frame} className="player-frozen-frame" hidden aria-hidden="true" />
-        {uploadedId && (
-          <SubtitleOverlay
-            fileId={file.id}
-            subtitleId={uploadedId}
-            time={position}
-            delay={subtitleDelay}
-          />
-        )}
         {loading && (
           <div className="native-player-loading" role="status">
             <Loader size={18} type="dots" />
@@ -878,22 +892,38 @@ function Surface() {
                 portalTarget={wrapper.current ?? undefined}
                 label={t('subtitles')}
                 footer={
-                  <SubtitleUpload
-                    fileId={file.id}
-                    onUploaded={async (id) => {
-                      await subtitles.refetch();
-                      restart(() => {
-                        setSubtitle(`upload:${id}`);
-                        setSubtitleDelay(0);
-                      });
-                    }}
-                  />
+                  <>
+                    {canTranscode ? (
+                      <SubtitleUpload
+                        fileId={file.id}
+                        onUploaded={async (id) => {
+                          await subtitles.refetch();
+                          restart(() => {
+                            setSubtitle(`upload:${id}`);
+                          });
+                        }}
+                      />
+                    ) : (
+                      <span>{t('native.transcodingDisabled')}</span>
+                    )}
+                    {subtitles.data?.items.find((sub) => sub.id === uploadedId)?.uploaded && (
+                      <UploadedSubtitleDelete
+                        fileId={file.id}
+                        subtitleId={uploadedId}
+                        onDeleted={async () => {
+                          await subtitles.refetch();
+                          restart(() => {
+                            setSubtitle('-1');
+                          });
+                        }}
+                      />
+                    )}
+                  </>
                 }
-                value={uploadedId ? 'upload:' + uploadedId : effectiveSubtitle}
+                value={canTranscode && uploadedId ? 'upload:' + uploadedId : effectiveSubtitle}
                 onChange={(v) =>
                   restart(() => {
                     setSubtitle(v ?? '-1');
-                    setSubtitleDelay(0);
                   })
                 }
                 data={[
@@ -904,19 +934,22 @@ function Surface() {
                       value: String(track.index),
                       label: `${track.language || track.codec} ${track.index} · ${t('playerSub.burned')}`,
                     })),
-                  ...(subtitles.data?.items.map((sub) => ({
-                    value: `upload:${sub.id}`,
-                    label: sub.name,
-                  })) ?? []),
+                  ...(canTranscode
+                    ? (subtitles.data?.items.map((sub) => ({
+                        value: `upload:${sub.id}`,
+                        label: sub.name,
+                      })) ?? [])
+                    : []),
                 ]}
               />
               <SubtitleTiming
                 key={subtitle}
-                active={Boolean(uploadedId || effectiveSubtitle !== '-1')}
-                burned={!uploadedId && effectiveSubtitle !== '-1'}
+                active={personalTiming.ready && hasBurnedSubtitle}
+                burned={hasBurnedSubtitle}
                 portalTarget={wrapper.current ?? undefined}
                 value={subtitleDelay}
-                onChange={(v) => restart(() => setSubtitleDelay(v))}
+                onChange={(v) => restart(() => personalTiming.change(v))}
+                onChangeEnd={personalTiming.save}
               />
               <PlaybackOption
                 portalTarget={wrapper.current ?? undefined}

@@ -22,7 +22,7 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 	if err != nil {
 		return PlaybackDecisionDTO{}, err
 	}
-	d := PlaybackDecisionDTO{VideoAction: "copy", AudioAction: "copy", SubtitleAction: "external", Container: "mp4"}
+	d := PlaybackDecisionDTO{VideoAction: "copy", AudioAction: "copy", SubtitleAction: "none", SubtitleID: b.SubtitleID, Container: "mp4"}
 	if b.Capabilities == nil || legacy == "audio" {
 		d.Reason = "Legacy playback capability report"
 		switch legacy {
@@ -46,24 +46,13 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 		default:
 			d.Mode = PlaybackModeTranscode
 			d.Container = "hls"
-			if b.SubtitleIndex >= 0 {
+			if b.SubtitleIndex >= 0 || b.SubtitleID != "" {
 				d.SubtitleAction = "burn"
 			}
 			d.VideoAction = "transcode"
 			d.AudioAction = "transcode"
 		}
 		return applyToneMappingDecision(probe, d)
-	}
-	// A prepared SRT/WebVTT track uses the external overlay, even when
-	// selected by its original stream index. ASS/bitmap tracks retain burn-in.
-	if b.SubtitleIndex >= 0 {
-		for _, track := range probe.Streams {
-			if track.Type == "subtitle" && track.Index == b.SubtitleIndex && track.SubtitleID != "" {
-				d.SubtitleID = track.SubtitleID
-				b.SubtitleIndex = -1
-				break
-			}
-		}
 	}
 	var video, audio *media.Stream
 	for i := range probe.Streams {
@@ -90,14 +79,17 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 	if duration > 0 {
 		bitrate = float64(size) * 8 / duration
 	}
-	maxWidth := map[int]int{720: 1280, 1080: 1920, 2160: 3840}[b.MaxHeight]
+	maxWidth := map[int]int{360: 640, 720: 1280, 1080: 1920, 2160: 3840}[b.MaxHeight]
 	resize := b.MaxHeight > 0 && (video.Height == 0 || video.Height > b.MaxHeight || video.Width > maxWidth)
 	reduce := b.MaxBitrate > 0 && (bitrate == 0 || bitrate > float64(b.MaxBitrate))
+	if b.SubtitleIndex >= 0 || b.SubtitleID != "" {
+		d.SubtitleAction = "burn"
+	}
 	reason := ""
 	switch {
 	case b.ForceTranscode:
 		reason = "Client requested video transcoding after a playback failure"
-	case b.SubtitleIndex >= 0:
+	case b.SubtitleIndex >= 0 || b.SubtitleID != "":
 		reason = "Selected subtitle requires burn-in"
 		d.SubtitleAction = "burn"
 	case resize || reduce:

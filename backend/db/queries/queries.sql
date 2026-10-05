@@ -113,14 +113,16 @@ UPDATE jobs SET cancel_requested=true,state=CASE WHEN state='pending' THEN 'canc
 -- name: ListJobs :many
 SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100;
 -- name: ListJobDetails :many
-SELECT sqlc.embed(j), COALESCE(l.name, i.title, pi.title, '')::text AS resource_name,
- COALESCE(i.id, pi.id, '')::text AS item_id,
- COALESCE(l.id, i.library_id, pi.library_id, '')::text AS library_id
+SELECT sqlc.embed(j), COALESCE(l.name, i.title, pi.title, si.title, '')::text AS resource_name,
+ COALESCE(i.id, pi.id, si.id, '')::text AS item_id,
+ COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id
 FROM jobs j
 LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
+LEFT JOIN media_files sf ON j.kind='subtitle_sync' AND sf.id=j.resource_id
+LEFT JOIN items si ON si.id=sf.item_id
 ORDER BY j.created_at DESC LIMIT 100;
 -- name: Heartbeat :exec
 INSERT INTO workers(id,role) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now();
@@ -129,7 +131,7 @@ SELECT * FROM workers WHERE heartbeat_at>now()-interval '60 seconds' ORDER BY ro
 -- name: ReapJobs :exec
 UPDATE jobs SET state=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,error='Worker lease expired',updated_at=now() WHERE state='running' AND lease_until<now() AND (cancel_requested OR role='transcoder' OR attempts>=3);
 -- name: StartPlayback :exec
-INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at,decision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,COALESCE(sqlc.narg('decision')::jsonb,'{}'::jsonb));
+INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at,decision,preview) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,COALESCE(sqlc.narg('decision')::jsonb,'{}'::jsonb),sqlc.arg(preview));
 -- name: GetPlayback :one
 SELECT * FROM playback_sessions WHERE id=$1;
 -- name: SetPlaybackReady :exec

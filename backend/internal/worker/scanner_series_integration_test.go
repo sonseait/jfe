@@ -54,7 +54,7 @@ func TestScanRegroupsSeriesByFolder(t *testing.T) {
 		if err = db.UpsertItem(ctx, store.UpsertItemParams{ID: itemID, LibraryID: id, Kind: "episode", ParentID: legacy, Title: rel}); err != nil {
 			t.Fatal(err)
 		}
-		if err = db.SaveFile(ctx, store.SaveFileParams{ID: stable("file", id, path), ItemID: itemID, Path: path, Size: stat.Size(), ModifiedAt: stat.ModTime().UnixNano(), Probe: []byte(`{"probe_version":1,"format":{"duration":"60"}}`)}); err != nil {
+		if err = db.SaveFile(ctx, store.SaveFileParams{ID: stable("file", id, path), ItemID: itemID, Path: path, Size: stat.Size(), ModifiedAt: stat.ModTime().UnixNano(), Probe: []byte(`{"probe_version":3,"format":{"duration":"60"}}`)}); err != nil {
 			t.Fatal(err)
 		}
 	}

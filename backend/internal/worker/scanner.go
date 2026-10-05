@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 	"io"
 	"io/fs"
 	"jfe/backend/internal/audio"
@@ -98,7 +99,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			}
 			old, e := w.DB.FileByPath(ctx, store.FileByPathParams{Path: real, LibraryID: id})
 			var probe media.Probe
-			cached := e == nil && old.Size == stat.Size() && old.ModifiedAt == stat.ModTime().UnixNano() && json.Unmarshal(old.Probe, &probe) == nil && probe.Version >= 1
+			cached := e == nil && old.Size == stat.Size() && old.ModifiedAt == stat.ModTime().UnixNano() && json.Unmarshal(old.Probe, &probe) == nil && probe.Version >= 3
 			if cached {
 				// Rebuild sidecars each scan even when the video itself has not changed.
 				streams := probe.Streams[:0]
@@ -162,6 +163,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 				lang := strings.TrimPrefix(strings.TrimPrefix(stem, base), ".")
 				probe.Streams = append(probe.Streams, media.Stream{Index: 10000 + len(probe.Streams), Type: "subtitle", Codec: strings.TrimPrefix(ext, "."), ExternalPath: safe, Tags: map[string]string{"language": lang}})
 			}
+			w.prepareTextSubtitles(ctx, stable("file", id, real), real, &probe)
 			b, _ := json.Marshal(probe)
 			if e = w.DB.SaveFile(ctx, store.SaveFileParams{ID: stable("file", id, real), ItemID: itemID, Path: real, Size: stat.Size(), ModifiedAt: stat.ModTime().UnixNano(), Duration: probe.Duration(), Probe: b}); e != nil {
 				return e
@@ -178,7 +180,12 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			return w.localMetadata(ctx, itemID, real, options.ForceMetadata)
 		}()
 		if e != nil {
-			return e
+			// A corrupt or unsupported file must not prevent the rest of a library from scanning.
+			log.Warn().Err(e).Str("file", filepath.Base(real)).Str("libraryId", id).Msg("skipping media file")
+			if e = report(n+1, len(paths)); e != nil {
+				return e
+			}
+			continue
 		}
 		if e = report(n+1, len(paths)); e != nil {
 			return e
@@ -341,8 +348,9 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		return e
 	}
 	var payload struct {
-		ProviderID int  `json:"providerId"`
-		Automatic  bool `json:"automatic"`
+		ProviderID int    `json:"providerId"`
+		Automatic  bool   `json:"automatic"`
+		Mode       string `json:"mode"`
 	}
 	if e = json.Unmarshal(j.Payload, &payload); e != nil {
 		return e
@@ -353,6 +361,18 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 	}
 	if payload.Automatic && !general.AutoMetadata {
 		return nil
+	}
+	if payload.Mode == "missing" {
+		if i.Kind == "series" {
+			if i.ProviderID == "" {
+				return fmt.Errorf("identify the series before its episodes")
+			}
+			return w.scheduleEpisodeMetadata(ctx, i.ID, payload.Automatic, payload.Mode)
+		}
+		// Recheck at execution time: another job may have populated this episode.
+		if i.ProviderID != "" {
+			return nil
+		}
 	}
 	if i.MetadataLocked && payload.ProviderID == 0 {
 		return nil
@@ -414,6 +434,17 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 	}
 	if e = media.TMDB(ctx, w.Config.TMDBToken, path+"?append_to_response=credits&language="+general.MetadataLanguage, &info); e != nil {
 		return e
+	}
+	if i.Kind == "episode" && general.MetadataLanguage != "en-US" && genericEpisodeTitle(info.Name, i.Episode) {
+		var english struct {
+			Name string `json:"name"`
+		}
+		if e = media.TMDB(ctx, w.Config.TMDBToken, path+"?language=en-US", &english); e != nil {
+			return e
+		}
+		if english.Name != "" {
+			info.Name = english.Name
+		}
 	}
 	cast := []media.CastMember{}
 	var oldCast []media.CastMember
@@ -481,15 +512,20 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 	if e != nil || i.Kind != "series" {
 		return e
 	}
-	episodes, e := w.DB.SeriesEpisodes(ctx, i.ID)
+	return w.scheduleEpisodeMetadata(ctx, i.ID, payload.Automatic, payload.Mode)
+}
+
+func (w *Worker) scheduleEpisodeMetadata(ctx context.Context, seriesID string, automatic bool, mode string) error {
+	episodes, e := w.DB.SeriesEpisodes(ctx, seriesID)
 	if e != nil {
 		return e
 	}
 	episodePayload, _ := json.Marshal(struct {
-		Automatic bool `json:"automatic"`
-	}{payload.Automatic})
+		Automatic bool   `json:"automatic"`
+		Mode      string `json:"mode,omitempty"`
+	}{automatic, mode})
 	for _, episode := range episodes {
-		if episode.MetadataLocked {
+		if episode.MetadataLocked || (mode == "missing" && episode.ProviderID != "") {
 			continue
 		}
 		if _, e = w.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "scanner", Kind: "metadata", ResourceID: episode.ID, Payload: episodePayload}); e != nil {
@@ -497,4 +533,10 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		}
 	}
 	return nil
+}
+
+func genericEpisodeTitle(title string, episode int32) bool {
+	title = strings.ToLower(strings.TrimSpace(title))
+	number := strconv.Itoa(int(episode))
+	return title == "episode "+number || title == "tap "+number || title == "tập "+number
 }

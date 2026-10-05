@@ -187,17 +187,21 @@ func TestEpisodeMetadataUsesIdentifiedSeries(t *testing.T) {
 		if r.URL.Host != "api.themoviedb.org" || r.URL.Path != "/3/tv/42/season/2/episode/3" {
 			return nil, errors.New("wrong episode metadata request")
 		}
+		if r.URL.Query().Get("language") == "en-US" {
+			body := `{"name":"A Real Episode Title"}`
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+		}
 		if r.URL.Query().Get("append_to_response") != "credits" || r.URL.Query().Get("language") != "vi-VN" {
 			t.Fatal("episode metadata request omitted options")
 		}
-		body := `{"id":303,"name":"The Episode","air_date":"2024-02-03","overview":"Episode overview","still_path":"/still.jpg","credits":{"cast":[]}}`
+		body := `{"id":303,"name":"Episode 3","air_date":"2024-02-03","overview":"Episode overview","still_path":"/still.jpg","credits":{"cast":[]}}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
 	if err = w.metadata(ctx, store.Job{ResourceID: episodeID, Payload: []byte(`{"automatic":true}`)}); err != nil {
 		t.Fatal(err)
 	}
 	episode, err := db.GetItem(ctx, episodeID)
-	if err != nil || episode.Title != "The Episode" || episode.Year != 2024 || episode.Overview != "Episode overview" || episode.ProviderID != "303" || episode.Poster != episodeID+".jpg" {
+	if err != nil || episode.Title != "A Real Episode Title" || episode.Year != 2024 || episode.Overview != "Episode overview" || episode.ProviderID != "303" || episode.Poster != episodeID+".jpg" {
 		t.Fatalf("episode metadata was not saved: %+v %v", episode, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(w.Config.CacheRoot, "artwork", episode.Poster)); err != nil || len(data) == 0 {
@@ -221,11 +225,15 @@ func TestSeriesMetadataSchedulesEpisodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Exec(ctx, `DELETE FROM libraries WHERE id=$1`, libraryID)
+	defer pool.Exec(ctx, `DELETE FROM jobs WHERE resource_id IN (SELECT id FROM items WHERE library_id=$1)`, libraryID)
 	if _, err = pool.Exec(ctx, `INSERT INTO items(id,library_id,kind,title,sort_title) VALUES($1,$2,'series','A Show','a show')`, seriesID, libraryID); err != nil {
 		t.Fatal(err)
 	}
-	for _, locked := range []bool{false, true} {
-		if _, err = pool.Exec(ctx, `INSERT INTO items(id,library_id,parent_id,kind,title,sort_title,season,episode,metadata_locked) VALUES($1,$2,$3,'episode','Episode','episode',1,$4,$5)`, uuid.NewString(), libraryID, seriesID, 1, locked); err != nil {
+	for _, episode := range []struct {
+		locked   bool
+		provider string
+	}{{false, ""}, {true, ""}, {false, "123"}} {
+		if _, err = pool.Exec(ctx, `INSERT INTO items(id,library_id,parent_id,kind,title,sort_title,season,episode,metadata_locked,provider_id) VALUES($1,$2,$3,'episode','Episode','episode',1,$4,$5,$6)`, uuid.NewString(), libraryID, seriesID, 1, episode.locked, episode.provider); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -240,11 +248,85 @@ func TestSeriesMetadataSchedulesEpisodes(t *testing.T) {
 		body := `{"id":42,"name":"A Show","first_air_date":"2024-01-01","credits":{"cast":[]}}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
-	if err = w.metadata(ctx, store.Job{ResourceID: seriesID, Payload: []byte(`{"providerId":42}`)}); err != nil {
+	if err = w.metadata(ctx, store.Job{ResourceID: seriesID, Payload: []byte(`{"providerId":42,"mode":"replace"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	var jobs int
-	if err = pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind='metadata' AND resource_id IN (SELECT id FROM items WHERE parent_id=$1)`, seriesID).Scan(&jobs); err != nil || jobs != 1 {
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind='metadata' AND resource_id IN (SELECT id FROM items WHERE parent_id=$1)`, seriesID).Scan(&jobs); err != nil || jobs != 2 {
 		t.Fatalf("episode jobs=%d err=%v", jobs, err)
+	}
+}
+
+func TestMissingEpisodeMetadataPreservesExisting(t *testing.T) {
+	base := os.Getenv("JFE_TEST_SCHEMA_URL")
+	if base == "" {
+		t.Skip("requires isolated integration schema")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	libraryID, seriesID := uuid.NewString(), uuid.NewString()
+	if _, err = pool.Exec(ctx, `INSERT INTO libraries(id,name,kind,paths) VALUES($1,'Missing episodes','series','{}')`, libraryID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM libraries WHERE id=$1`, libraryID)
+	defer pool.Exec(ctx, `DELETE FROM jobs WHERE resource_id IN (SELECT id FROM items WHERE library_id=$1)`, libraryID)
+	if _, err = pool.Exec(ctx, `INSERT INTO items(id,library_id,kind,title,sort_title,provider_id,metadata_locked) VALUES($1,$2,'series','Keep series','keep series','42',true)`, seriesID, libraryID); err != nil {
+		t.Fatal(err)
+	}
+	missingID, existingID, lockedID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	for _, episode := range []struct {
+		id, provider string
+		locked       bool
+	}{{missingID, "", false}, {existingID, "123", false}, {lockedID, "", true}} {
+		if _, err = pool.Exec(ctx, `INSERT INTO items(id,library_id,parent_id,kind,title,sort_title,provider_id,metadata_locked,season,episode) VALUES($1,$2,$3,'episode','Keep episode','keep episode',$4,$5,1,1)`, episode.id, libraryID, seriesID, episode.provider, episode.locked); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := Worker{DB: store.New(pool), Pool: pool, Config: config.Config{TMDBToken: "test-token", CacheRoot: t.TempDir()}}
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	requests := 0
+	http.DefaultTransport = metadataTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Path != "/3/tv/42/season/1/episode/1" {
+			t.Fatalf("unexpected lookup: %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":456,"name":"Fetched episode","overview":"New metadata"}`)), Header: http.Header{}}, nil
+	})
+	if err = w.metadata(ctx, store.Job{ResourceID: seriesID, Payload: []byte(`{"mode":"missing"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE resource_id IN (SELECT id FROM items WHERE parent_id=$1)`, seriesID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("jobs=%d err=%v", count, err)
+	}
+	var payload []byte
+	if err = pool.QueryRow(ctx, `SELECT payload FROM jobs WHERE resource_id=$1`, missingID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatal("missing refresh fetched series metadata")
+	}
+	for _, id := range []string{existingID, lockedID, missingID, missingID} {
+		if err = w.metadata(ctx, store.Job{ResourceID: id, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("existing or locked metadata overwritten: requests=%d", requests)
+	}
+	for _, id := range []string{seriesID, existingID, lockedID} {
+		item, err := w.DB.GetItem(ctx, id)
+		if err != nil || !strings.HasPrefix(item.Title, "Keep ") {
+			t.Fatalf("metadata changed: %+v %v", item, err)
+		}
+	}
+	item, err := w.DB.GetItem(ctx, missingID)
+	if err != nil || item.ProviderID != "456" || item.Title != "Fetched episode" {
+		t.Fatalf("missing episode not populated: %+v %v", item, err)
 	}
 }

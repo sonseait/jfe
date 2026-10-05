@@ -73,6 +73,11 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		AudioIndex, SubtitleIndex, MaxBitrate, MaxHeight int
 		SubtitleDelay                                    float64
 		Position                                         float64
+		Decision                                         struct {
+			Container   string
+			AudioAction string
+			VideoCodec  string
+		}
 	}
 	if e = json.Unmarshal(j.Payload, &b); e != nil {
 		return e
@@ -85,8 +90,33 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	if e != nil {
 		return e
 	}
+	var probe media.Probe
+	if e = json.Unmarshal(f.Probe, &probe); e != nil {
+		return e
+	}
+	toneMap := ""
+	if p.Method == "transcode" {
+		for _, track := range probe.Streams {
+			if track.Type == "video" && track.Disposition.AttachedPic == 0 {
+				toneMap, e = media.ToneMappingFilter(track)
+				break
+			}
+		}
+		if e != nil {
+			return e
+		}
+		if toneMap != "" {
+			if e = requireToneMappingFilters(ctx); e != nil {
+				return e
+			}
+		}
+	}
 	var videoArgs []string
 	if p.Method == "transcode" {
+		if b.Decision.VideoCodec != "" {
+			cfg.VideoCodec = b.Decision.VideoCodec
+			cfg.AudioCodec = "aac"
+		}
 		videoArgs, e = cfg.VideoArgs(cfg.VideoBitrate(b.MaxHeight, b.MaxBitrate))
 		if e != nil {
 			return e
@@ -114,30 +144,42 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	if p.Method == "audio" {
 		args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", audio, "-vn", "-c:a", cfg.AudioCodec, "-b:a", strconv.Itoa(cfg.AudioBitrate), "-ac", "2"}
 	} else if p.Method == "remux" {
-		var probe media.Probe
-		if e = json.Unmarshal(f.Probe, &probe); e != nil {
-			return e
-		}
 		args = append(args, "-c:v", "copy")
-		args = append(args, remuxAudioArgs(probe, b.AudioIndex)...)
+		if b.Decision.AudioAction == "copy" {
+			args = append(args, "-c:a", "copy")
+		} else {
+			args = append(args, remuxAudioArgs(probe, b.AudioIndex)...)
+		}
+		if b.Decision.Container == "mp4" {
+			args = append(args, "-tag:v", "hvc1")
+			for _, stream := range probe.Streams {
+				if stream.Type == "video" && stream.Codec != "hevc" {
+					args = args[:len(args)-2]
+					break
+				}
+			}
+		}
 	} else {
 		args = append(args, videoArgs...)
 		args = append(args, "-c:a", cfg.AudioCodec, "-ac", "2", "-b:a", strconv.Itoa(cfg.AudioBitrate))
 		filters := []string{}
+		if toneMap != "" {
+			args = append(args, media.SDRColorArgs()...)
+			args = append(args, "-filter_threads", "2", "-filter_complex_threads", "2", "-map_metadata", "-1")
+		}
+		// HDR is linearized/tone-mapped before any SDR subtitle composition.
 		if b.MaxHeight > 0 {
 			filters = append(filters, resolutionFilter(b.MaxHeight))
 		}
+		bitmap := false
 		if b.SubtitleIndex >= 0 {
-			var probe media.Probe
-			_ = json.Unmarshal(f.Probe, &probe)
-			bitmap := false
 			for _, s := range probe.Streams {
 				if s.Index == b.SubtitleIndex && (s.Codec == "hdmv_pgs_subtitle" || s.Codec == "dvd_subtitle") {
 					bitmap = true
 				}
 			}
 			if bitmap {
-				args = append(args, "-filter_complex", fmt.Sprintf("[0:%d]setpts=PTS%+.3f/TB[sub];[0:v:0][sub]overlay%s[v]", b.SubtitleIndex, b.SubtitleDelay, filterSuffix(filters)))
+				args = append(args, "-filter_complex", bitmapSubtitleGraph(toneMap, b.SubtitleIndex, b.SubtitleDelay, filters))
 				for n := 0; n < len(args)-1; n++ {
 					if args[n] == "-map" && args[n+1] == "0:v:0" {
 						args[n+1] = "[v]"
@@ -162,12 +204,20 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass:force_style='%s',setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay, cfg.SubtitleStyle()))
 			}
 		}
+		if toneMap != "" && !bitmap {
+			filters = append([]string{toneMap}, filters...)
+		}
 		if len(filters) > 0 {
 			args = append(args, "-vf", strings.Join(filters, ","))
 		}
 		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*4)")
 	}
-	args = append(args, "-sn", "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "event", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_filename", "segment-%06d.ts", "index.m3u8")
+	remuxMP4 := p.Method == "remux" && b.Decision.Container == "mp4"
+	if remuxMP4 {
+		args = append(args, remuxOutputArgs()...)
+	} else {
+		args = append(args, "-sn", "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "event", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_filename", "segment-%06d.ts", "index.m3u8")
+	}
 	processCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(processCtx, "ffmpeg", args...)
@@ -218,7 +268,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		}
 	}()
 	markReady := func() error {
-		info := media.StreamInfo{VideoTranscoded: p.Method == "transcode", BitrateSource: "pending"}
+		info := media.StreamInfo{ToneMapped: toneMap != "", VideoTranscoded: p.Method == "transcode", BitrateSource: "pending"}
 		if err := writeStreamInfo(dir, info); err != nil {
 			return err
 		}
@@ -229,7 +279,11 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		measured = make(chan struct{})
 		go func() {
 			defer close(measured)
-			sample, err := media.InspectSegment(measurementCtx, filepath.Join(dir, "segment-000000.ts"))
+			samplePath := filepath.Join(dir, "segment-000000.ts")
+			if remuxMP4 {
+				samplePath = filepath.Join(dir, "stream.mp4")
+			}
+			sample, err := media.InspectSegment(measurementCtx, samplePath)
 			if measurementCtx.Err() != nil {
 				return
 			}
@@ -238,6 +292,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				sample.BitrateSource = "unavailable"
 			}
 			sample.VideoTranscoded = info.VideoTranscoded
+			sample.ToneMapped = info.ToneMapped
 			if err := writeStreamInfo(dir, sample); err != nil {
 				log.Warn().Err(err).Str("playbackId", p.ID).Msg("Could not save output stream bitrate")
 			}
@@ -261,6 +316,14 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				}
 				return fmt.Errorf("ffmpeg failed: %w: %s", err, strings.TrimSpace(string(diagnostic[:n])))
 			}
+			if remuxMP4 {
+				if !remuxHasInitialBuffer(dir) {
+					return errors.New("remux produced no complete media fragment")
+				}
+				if e = os.WriteFile(filepath.Join(dir, "complete"), nil, 0600); e != nil {
+					return e
+				}
+			}
 			if !ready {
 				if e = markReady(); e != nil {
 					return e
@@ -281,7 +344,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				return errPlaybackStopped
 			}
 			if !ready {
-				if hlsHasInitialBuffer(dir) {
+				if (remuxMP4 && remuxHasInitialBuffer(dir)) || (!remuxMP4 && hlsHasInitialBuffer(dir)) {
 					if e = markReady(); e != nil {
 						cancel()
 						<-done

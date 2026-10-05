@@ -170,6 +170,20 @@ func (s *Server) register() {
 		v, e := s.enqueue(ctx, "scanner", "metadata", in.Params.ID, in.Body)
 		return out(v, e)
 	})
+	route.Post(r, op("/items/:id/metadata/refresh", "refreshItemMetadata", "admin"), func(ctx context.Context, in route.Input[MetadataRefreshRequest, route.Empty, IDParams]) (route.Output[JobDTO], error) {
+		i, e := s.DB.GetItem(ctx, in.Params.ID)
+		if e != nil {
+			return out(JobDTO{}, e)
+		}
+		if i.Kind != "movie" && i.Kind != "series" {
+			return out(JobDTO{}, route.Fail(422, "Refresh metadata from the movie or series"))
+		}
+		if in.Body.Mode == "missing" && (i.Kind != "series" || i.ProviderID == "") {
+			return out(JobDTO{}, route.Fail(422, "Identify the series before refreshing missing episodes"))
+		}
+		v, e := s.enqueue(ctx, "scanner", "metadata", i.ID, in.Body)
+		return out(v, e)
+	})
 	route.Get(r, op("/admin/jobs", "listJobs", "admin"), func(ctx context.Context, _ route.Input[route.Empty, route.Empty, route.Empty]) (route.Output[JobsDTO], error) {
 		jobs, e := s.DB.ListJobDetails(ctx)
 		v := JobsDTO{Items: []JobDTO{}}

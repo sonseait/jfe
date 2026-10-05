@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -47,6 +48,17 @@ func (s *Server) subtitleRoutes() {
 		if err := s.subtitleAccess(ctx, in.Params.ID); err != nil {
 			return out(v, err)
 		}
+		f, err := s.DB.GetFile(ctx, in.Params.ID)
+		if err != nil {
+			return out(v, err)
+		}
+		var probe media.Probe
+		_ = json.Unmarshal(f.Probe, &probe)
+		for _, track := range probe.Streams {
+			if track.SubtitleID != "" {
+				v.Items = append(v.Items, SubtitleDTO{ID: track.SubtitleID, Name: strings.TrimSpace(track.Tags["language"] + " " + track.Tags["title"] + " " + track.Codec)})
+			}
+		}
 		rows, err := s.DB.ListSubtitles(ctx, store.ListSubtitlesParams{FileID: in.Params.ID, UserID: route.User(ctx).ID})
 		for _, row := range rows {
 			v.Items = append(v.Items, SubtitleDTO{row.ID, row.Name, int(row.CueCount)})
@@ -77,6 +89,26 @@ func (s *Server) subtitleRoutes() {
 		v := SubtitleDocument{}
 		if err := s.subtitleAccess(ctx, in.Params.ID); err != nil {
 			return out(v, err)
+		}
+		f, err := s.DB.GetFile(ctx, in.Params.ID)
+		if err != nil {
+			return out(v, err)
+		}
+		var probe media.Probe
+		_ = json.Unmarshal(f.Probe, &probe)
+		for _, track := range probe.Streams {
+			if track.SubtitleID == in.Params.SubtitleID {
+				path, err := media.Within(filepath.Join(s.Config.CacheRoot, "subtitles"), filepath.Join(s.Config.CacheRoot, "subtitles", track.SubtitleID+".json"))
+				if err != nil {
+					return out(v, route.Fail(404, "Subtitle unavailable"))
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return out(v, err)
+				}
+				err = json.Unmarshal(data, &v.Cues)
+				return out(v, err)
+			}
 		}
 		row, err := s.DB.GetSubtitle(ctx, store.GetSubtitleParams{ID: in.Params.SubtitleID, FileID: in.Params.ID, UserID: route.User(ctx).ID})
 		if err != nil {

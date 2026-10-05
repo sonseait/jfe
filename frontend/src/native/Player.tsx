@@ -16,7 +16,15 @@ import { create } from 'zustand';
 import toast from 'react-hot-toast';
 import type Hls from 'hls.js';
 import type { LoaderStats } from 'hls.js';
-import { canDirectPlay } from './playback-support';
+import {
+  measurePlaybackRate,
+  preferredSubtitle,
+  selectAutoQuality,
+  networkDownlink,
+  createAutoQuality,
+} from './playback-preferences';
+import { playbackCapabilities } from './playback-support';
+import { playRemux, RemuxDecodeError } from './remux-player';
 import { createAdaptiveBuffer, INITIAL_BUFFER_CONFIG } from './playback-buffer';
 import {
   bufferedRanges,
@@ -28,6 +36,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { SubtitleOverlay, SubtitleTiming, SubtitleUpload } from './Subtitles';
 import { StreamIndicator } from './StreamIndicator';
+import { queryClient } from '../lib/query-client';
 import { api, result, useAuth, useResource, type DTO } from './api';
 function clockTime(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -146,9 +155,8 @@ function Surface() {
   const [buffered, setBuffered] = useState<[number, number][]>([]);
   const [fullscreen, setFullscreen] = useState(false);
   const [audio, setAudio] = useState('-1');
-  const [subtitle, setSubtitle] = useState('-1');
+  const [subtitleChoice, setSubtitle] = useState<string | null>(null);
   const [subtitleDelay, setSubtitleDelay] = useState(0);
-  const uploadedId = subtitle.startsWith('upload:') ? subtitle.slice(7) : '';
   const subtitles = useResource(
     ['subtitles', state.fileId],
     async (signal) =>
@@ -160,8 +168,42 @@ function Surface() {
       ),
     Boolean(state.fileId && auth),
   );
-  const [quality, setQuality] = useState('0');
-  const effectiveQuality = canTranscode ? quality : '0';
+  const file = state.detail?.files.find((f) => f.id === state.fileId);
+  const subtitle =
+    subtitleChoice ??
+    preferredSubtitle(file?.tracks ?? [], subtitles.data?.items ?? [], i18n.language, canTranscode);
+  const uploadedId = subtitle.startsWith('upload:')
+    ? subtitle.slice(7)
+    : (file?.tracks.find((track) => track.index === Number(subtitle) && track.type === 'subtitle')
+        ?.subtitleId ?? '');
+  const [quality, setQuality] = useState('auto');
+  const [autoQuality, setAutoQuality] = useState(() =>
+    file ? selectAutoQuality(file, networkDownlink()) : { maxHeight: 0 as const, maxBitrate: 0 },
+  );
+  const adaptiveQuality = useRef(createAutoQuality(autoQuality));
+  const effectiveQuality = canTranscode
+    ? quality === 'auto'
+      ? String(autoQuality.maxHeight)
+      : quality
+    : '0';
+  const sourceBitrate =
+    file && file.duration > 0 ? Math.min(100000000, Math.ceil((file.size * 8) / file.duration)) : 0;
+  const automaticBitrate =
+    canTranscode && quality === 'auto'
+      ? autoQuality.maxBitrate || (!uploadedId && subtitle !== '-1' ? sourceBitrate : 0)
+      : 0;
+  const sampleQuality = useRef<(rate: number | null, speed: number) => void>(() => {});
+  sampleQuality.current = (rate, speed) => {
+    if (!canTranscode || quality !== 'auto' || !file || rate === null) return;
+    const target = adaptiveQuality.current.sample(
+      selectAutoQuality(file, rate, speed),
+      performance.now(),
+    );
+    if (target) {
+      start.current = positionRef.current;
+      setAutoQuality(target);
+    }
+  };
   const effectiveSubtitle = canTranscode && !uploadedId ? subtitle : '-1';
   const [burnDelay] = useDebouncedValue(subtitleDelay, 500);
   const effectiveBurnDelay = effectiveSubtitle === '-1' ? 0 : burnDelay;
@@ -172,7 +214,6 @@ function Surface() {
   const [method, setMethod] = useState('direct');
   const [streamInfo, setStreamInfo] = useState<DTO<'PlaybackStreamDTO'>>();
   const [streamSize, setStreamSize] = useState<{ width: number; height: number } | null>(null);
-  const file = state.detail?.files.find((f) => f.id === state.fileId);
   const start = useRef(state.detail?.item.position ?? 0);
   const seekInSession = useRef<(position: number) => boolean>(() => false);
   useEffect(() => {
@@ -185,7 +226,7 @@ function Surface() {
     if (!auth) useNativePlayer.getState().stop();
   }, [auth]);
   useEffect(() => {
-    if (!state.fileId || !video.current || !auth) return;
+    if (!state.fileId || !video.current || !auth || system.isLoading || subtitles.isLoading) return;
     const el = video.current;
     const frozen = frame.current;
     const headers = { Authorization: `Bearer ${auth}` };
@@ -247,8 +288,18 @@ function Surface() {
       observer = new PerformanceObserver((list) => {
         if (hls || cancelled || !mediaURL) return;
         for (const entry of list.getEntries() as PerformanceResourceTiming[]) {
-          if (entry.name === mediaURL && entry.transferSize > 0) {
-            recordRate(transferRate(entry.encodedBodySize, entry.responseStart, entry.responseEnd));
+          if (
+            entry.name === mediaURL &&
+            entry.transferSize > 0 &&
+            entry.initiatorType !== 'fetch'
+          ) {
+            const rate = transferRate(
+              entry.encodedBodySize,
+              entry.responseStart,
+              entry.responseEnd,
+            );
+            recordRate(rate);
+            sampleQuality.current(rate, el.playbackRate);
           }
         }
       });
@@ -266,7 +317,7 @@ function Surface() {
           transferRate(stats.loaded, stats.loading.start, stats.loading.end || performance.now()),
         );
       } else if (rateAt && performance.now() - rateAt > 3000) {
-        setDownloadRate(hls ? 0 : null);
+        setDownloadRate(hls || session?.protocol === 'mp4' ? 0 : null);
       }
     }, 250);
     let chain = Promise.resolve();
@@ -290,6 +341,9 @@ function Surface() {
               headers,
             }),
           );
+          void queryClient.invalidateQueries({
+            queryKey: ['native', useAuth.getState().user?.id, 'resume'],
+          });
         })
         .catch(() => {});
     };
@@ -356,22 +410,34 @@ function Surface() {
     window.addEventListener('pagehide', report);
     void (async () => {
       try {
+        const support = file
+          ? await playbackCapabilities(
+              file,
+              Number(audio),
+              (mime) => el.canPlayType(mime),
+              (mime) => typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime),
+              navigator.mediaCapabilities?.decodingInfo.bind(navigator.mediaCapabilities),
+            )
+          : undefined;
+        if (cancelled) return;
         const response = await api.POST('/api/v1/playback', {
           headers,
           body: {
             fileId: state.fileId!,
+            capabilities: support?.capabilities,
             position: initial,
-            directPlay:
-              fallback === 0 &&
-              Boolean(file && canDirectPlay(file, (mime) => el.canPlayType(mime))),
+            directPlay: fallback === 0 && Boolean(support?.capabilities.containers.length),
             forceTranscode: fallback === 2,
+            autoQuality: canTranscode && quality === 'auto',
             audioIndex: Number(audio),
             subtitleIndex: Number(effectiveSubtitle),
             subtitleDelay: effectiveBurnDelay,
             maxBitrate:
-              ({ '720': 4000000, '1080': 8000000, '2160': 20000000 } as Record<string, number>)[
-                effectiveQuality
-              ] ?? 0,
+              quality === 'auto'
+                ? automaticBitrate
+                : ((
+                    { '720': 4000000, '1080': 8000000, '2160': 20000000 } as Record<string, number>
+                  )[effectiveQuality] ?? 0),
             maxHeight: Number(effectiveQuality) as 0 | 720 | 1080 | 2160,
           },
         });
@@ -380,6 +446,11 @@ function Surface() {
           response.error?.detail === 'Video transcoding is disabled'
         )
           throw new Error('native.transcodingDisabled');
+        if (
+          response.response.status === 409 &&
+          response.error?.detail === 'HDR video transcoding is unavailable'
+        )
+          throw new Error('native.hdrTranscodingUnavailable');
         session = result(response);
         if (cancelled) {
           await api.DELETE('/api/v1/playback/{id}', {
@@ -445,8 +516,25 @@ function Surface() {
         setOffset(base);
         const url = `${session.url}?token=${encodeURIComponent(streamToken ?? '')}`;
         mediaURL = new URL(url, window.location.href).href;
+        if (session.method === 'direct' && quality === 'auto' && canTranscode) {
+          for (let sample = 0; sample < 2 && !cancelled; sample++) {
+            const rate = await measurePlaybackRate(mediaURL, abort.signal);
+            recordRate(rate);
+            sampleQuality.current(rate, el.playbackRate);
+          }
+          if (cancelled) return;
+        }
         if (session.method === 'direct') el.src = url;
-        else {
+        else if (session.protocol === 'mp4' && support) {
+          setDownloadRate(0);
+          void playRemux(el, url, support.remuxMime, abort.signal, (bytes, started, ended) => {
+            const rate = transferRate(bytes, started, ended);
+            recordRate(rate);
+            sampleQuality.current(rate, el.playbackRate);
+          }).catch((error: unknown) => {
+            if (!cancelled) failPlayback(error instanceof RemuxDecodeError);
+          });
+        } else {
           const { default: Hls } = await import('hls.js');
           if (cancelled) return;
           if (Hls.isSupported()) {
@@ -477,6 +565,13 @@ function Surface() {
                   data.frag.stats.loading.end,
                 ),
               );
+              if (data.frag.type === 'main' && !data.frag.stats.aborted) {
+                const stats = data.part?.stats ?? data.frag.stats;
+                sampleQuality.current(
+                  transferRate(stats.loaded, stats.loading.first, stats.loading.end),
+                  el.playbackRate,
+                );
+              }
               activeStats = undefined;
             });
             hls.on(Hls.Events.BUFFER_APPENDED, onProgress);
@@ -505,6 +600,7 @@ function Surface() {
     })();
     return () => {
       cancelled = true;
+      start.current = positionRef.current;
       seekInSession.current = () => false;
       window.clearTimeout(infoTimer);
       window.clearInterval(metricsTimer);
@@ -555,6 +651,10 @@ function Surface() {
     effectiveSubtitle,
     effectiveBurnDelay,
     effectiveQuality,
+    automaticBitrate,
+    quality,
+    system.isLoading,
+    subtitles.isLoading,
     revision,
     fallback,
     file,
@@ -749,9 +849,10 @@ function Surface() {
                 label={t('quality')}
                 disabled={!canTranscode}
                 title={!canTranscode ? t('native.transcodingDisabled') : undefined}
-                value={effectiveQuality}
-                onChange={(v) => restart(() => setQuality(v ?? '0'))}
+                value={canTranscode ? quality : '0'}
+                onChange={(v) => restart(() => setQuality(v ?? 'auto'))}
                 data={[
+                  { value: 'auto', label: t('playerQuality.auto') },
                   { value: '0', label: t('original') },
                   { value: '720', label: '720p' },
                   { value: '1080', label: '1080p' },
@@ -788,7 +889,7 @@ function Surface() {
                     }}
                   />
                 }
-                value={uploadedId ? subtitle : effectiveSubtitle}
+                value={uploadedId ? 'upload:' + uploadedId : effectiveSubtitle}
                 onChange={(v) =>
                   restart(() => {
                     setSubtitle(v ?? '-1');
@@ -798,7 +899,7 @@ function Surface() {
                 data={[
                   { value: '-1', label: t('off') },
                   ...file.tracks
-                    .filter((t) => t.type === 'subtitle' && canTranscode)
+                    .filter((t) => t.type === 'subtitle' && !t.externalSubtitle && canTranscode)
                     .map((track) => ({
                       value: String(track.index),
                       label: `${track.language || track.codec} ${track.index} · ${t('playerSub.burned')}`,

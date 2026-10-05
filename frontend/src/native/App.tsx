@@ -50,6 +50,7 @@ import { useTranslation } from 'react-i18next';
 import { api, result, useAuth, useResource, type DTO, imageURL } from './api';
 import { Card, State, mutate } from './shared';
 import Admin, { MetadataEditor } from './Admin';
+import MetadataRefresh from './MetadataRefresh';
 import Player, { useNativePlayer } from './Player';
 
 function Brand() {
@@ -187,10 +188,6 @@ function Shell({ user, serverName }: { user: DTO<'UserDTO'>; serverName: string 
     <div className="app-shell">
       <aside className="sidebar">
         <Brand />
-        <div className="server-name" title={serverName}>
-          {serverName}
-        </div>
-        <div className="sidebar-label">{t('personalLibrary')}</div>
         <nav className="main-nav">
           {nav.map(([Icon, key, path]) => (
             <NavLink key={key} to={path} end={path === '/'}>
@@ -677,6 +674,7 @@ function Detail() {
                       {t('editMetadata')}
                     </Button>
                   )}
+                  {admin && item.kind === 'series' && <MetadataRefresh key={item.id} item={item} />}
                 </Group>
                 {(detail.data?.files.length ?? 0) > 1 && (
                   <Select

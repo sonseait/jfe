@@ -3,31 +3,32 @@ package media
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
 
 // Encoding permits NVENC video encoding only. Unknown modes fail closed.
 type Encoding struct {
-	Mode                      string `json:"mode"`
-	CQ                        int    `json:"cq"`
-	Device                    int    `json:"device"`
-	MaxConcurrent             int    `json:"maxConcurrent"`
-	Preset                    string `json:"preset"`
-	VideoCodec                string `json:"videoCodec"`
-	Bitrate720                int    `json:"bitrate720"`
-	Bitrate1080               int    `json:"bitrate1080"`
-	Bitrate2160               int    `json:"bitrate2160"`
-	AudioCodec                string `json:"audioCodec"`
-	AudioBitrate              int    `json:"audioBitrate"`
-	SubtitleSize              int    `json:"subtitleSize"`
-	SubtitleOutline           int    `json:"subtitleOutline"`
-	SubtitleMargin            int    `json:"subtitleMargin"`
-	SubtitleFont              string `json:"subtitleFont"`
-	SubtitleColor             string `json:"subtitleColor"`
-	SubtitleBackground        string `json:"subtitleBackground"`
-	SubtitleBackgroundOpacity int    `json:"subtitleBackgroundOpacity"`
-	SubtitleBorderColor       string `json:"subtitleBorderColor"`
+	Mode                      string  `json:"mode"`
+	CQ                        int     `json:"cq"`
+	Device                    int     `json:"device"`
+	MaxConcurrent             int     `json:"maxConcurrent"`
+	Preset                    string  `json:"preset"`
+	VideoCodec                string  `json:"videoCodec"`
+	Bitrate720                int     `json:"bitrate720"`
+	Bitrate1080               int     `json:"bitrate1080"`
+	Bitrate2160               int     `json:"bitrate2160"`
+	AudioCodec                string  `json:"audioCodec"`
+	AudioBitrate              int     `json:"audioBitrate"`
+	SubtitleSize              int     `json:"subtitleSize"`
+	SubtitleOutline           float64 `json:"subtitleOutline"`
+	SubtitleMargin            int     `json:"subtitleMargin"`
+	SubtitleFont              string  `json:"subtitleFont"`
+	SubtitleColor             string  `json:"subtitleColor"`
+	SubtitleBackground        string  `json:"subtitleBackground"`
+	SubtitleBackgroundOpacity int     `json:"subtitleBackgroundOpacity"`
+	SubtitleBorderColor       string  `json:"subtitleBorderColor"`
 }
 
 func ParseEncoding(data []byte) (Encoding, error) {
@@ -43,7 +44,7 @@ func ParseEncoding(data []byte) (Encoding, error) {
 		(cfg.VideoCodec != "h264" && cfg.VideoCodec != "hevc") ||
 		cfg.Bitrate720 < 100000 || cfg.Bitrate720 > 100000000 || cfg.Bitrate1080 < 100000 || cfg.Bitrate1080 > 100000000 || cfg.Bitrate2160 < 100000 || cfg.Bitrate2160 > 100000000 ||
 		(cfg.AudioCodec != "aac" && cfg.AudioCodec != "ac3") || cfg.AudioBitrate < 64000 || cfg.AudioBitrate > 1024000 ||
-		cfg.SubtitleSize < 12 || cfg.SubtitleSize > 72 || cfg.SubtitleOutline < 0 || cfg.SubtitleOutline > 10 || cfg.SubtitleMargin < 0 || cfg.SubtitleMargin > 200 || cfg.SubtitleBackgroundOpacity < 0 || cfg.SubtitleBackgroundOpacity > 100 ||
+		cfg.SubtitleSize < 12 || cfg.SubtitleSize > 72 || cfg.SubtitleOutline < 0 || cfg.SubtitleOutline > 10 || cfg.SubtitleOutline != math.Round(cfg.SubtitleOutline*2)/2 || cfg.SubtitleMargin < 0 || cfg.SubtitleMargin > 200 || cfg.SubtitleBackgroundOpacity < 0 || cfg.SubtitleBackgroundOpacity > 100 ||
 		(cfg.SubtitleFont != "Arial" && cfg.SubtitleFont != "Noto Sans" && cfg.SubtitleFont != "Noto Sans CJK") || !validColor(cfg.SubtitleColor) || !validColor(cfg.SubtitleBackground) || !validColor(cfg.SubtitleBorderColor) {
 		return cfg, fmt.Errorf("invalid encoding settings")
 	}
@@ -70,7 +71,7 @@ func (cfg Encoding) SubtitleStyle() string {
 		"PrimaryColour=" + assColor(cfg.SubtitleColor, 100),
 		"OutlineColour=" + assColor(cfg.SubtitleBorderColor, 100),
 		"BackColour=" + assColor(cfg.SubtitleBackground, cfg.SubtitleBackgroundOpacity),
-		"Outline=" + strconv.Itoa(cfg.SubtitleOutline),
+		"Outline=" + strconv.FormatFloat(cfg.SubtitleOutline, 'f', -1, 64),
 		"MarginV=" + strconv.Itoa(cfg.SubtitleMargin),
 		backgroundStyle,
 	}, ",")

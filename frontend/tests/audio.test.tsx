@@ -42,6 +42,7 @@ const item: DTO<'ItemDTO'> = {
   favorite: false,
   watched: false,
   position: 0,
+  duration: 120,
 };
 const file: DTO<'FileDTO'> = {
   id: 'file',

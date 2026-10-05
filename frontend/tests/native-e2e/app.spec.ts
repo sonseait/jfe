@@ -255,7 +255,10 @@ test('native setup/login, scan, playback, fullscreen, resume and admin', async (
     (r) => r.url().endsWith('/api/v1/playback') && r.request().method() === 'POST',
   );
   await player.locator('video').evaluate((el) => el.dispatchEvent(new Event('error')));
-  expect((await (await fallback).json()).method).toBe('remux');
+  const fallbackSession = await (await fallback).json();
+  expect(fallbackSession.method).toBe('remux');
+  expect(fallbackSession.protocol).toBe('mp4');
+  expect(fallbackSession.decision.videoAction).toBe('copy');
   await expect(player.locator('video')).toHaveJSProperty('paused', false, { timeout: 30000 });
   await expect(player.locator('.player-error')).toHaveCount(0);
   await expect(player.locator('.playback-indicator')).toHaveAttribute('data-method', 'remux');

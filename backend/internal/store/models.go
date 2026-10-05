@@ -135,6 +135,7 @@ type PlaybackSession struct {
 	Position      float64
 	ExpiresAt     time.Time
 	UpdatedAt     time.Time
+	Decision      []byte
 }
 
 type Session struct {

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) libraryDTO(ctx context.Context, l store.Library) (LibraryDTO, error) {
@@ -97,10 +98,18 @@ func (s *Server) itemDTO(ctx context.Context, i store.Item) ItemDTO {
 	if i.Poster != "" {
 		poster = "/api/v1/items/" + i.ID + "/image?token="
 	}
-	return ItemDTO{i.ID, i.LibraryID, i.ParentID, i.Kind, i.Title, int(i.Year), int(i.Season), int(i.Episode), i.Overview, poster, i.ProviderID, i.MetadataLocked, st.Favorite, st.Watched, st.Position}
+	duration := 0.0
+	files, _ := s.DB.ItemFiles(ctx, i.ID)
+	for _, file := range files {
+		if file.Available {
+			duration = file.Duration
+			break
+		}
+	}
+	return ItemDTO{i.ID, i.LibraryID, i.ParentID, i.Kind, i.Title, int(i.Year), int(i.Season), int(i.Episode), i.Overview, poster, i.ProviderID, i.MetadataLocked, st.Favorite, st.Watched, st.Position, duration}
 }
 
-type cursor struct{ Title, ID, Fingerprint string }
+type cursor struct{ Title, ID, Fingerprint, UpdatedAt string }
 
 func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) {
 	v := ItemsDTO{Items: []ItemDTO{}}
@@ -115,12 +124,29 @@ func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) 
 		if e != nil || json.Unmarshal(data, &cur) != nil || cur.Fingerprint != fingerprint {
 			return v, route.Fail(422, "Invalid cursor")
 		}
+		if q.Resume {
+			if _, err := time.Parse(time.RFC3339Nano, cur.UpdatedAt); err != nil {
+				return v, route.Fail(422, "Invalid cursor")
+			}
+		}
 	}
 	limit := q.Limit
 	if limit == 0 {
 		limit = 36
 	}
-	rows, e := s.DB.ListItems(ctx, store.ListItemsParams{Artist: q.Artist, TopLevel: q.TopLevel, IsAdmin: p.Role == "admin", UserID: p.ID, LibraryID: q.LibraryID, ParentID: q.ParentID, Kind: q.Kind, PersonID: q.PersonID, Search: q.Search, Favorites: q.Favorites, Resume: q.Resume, AfterTitle: cur.Title, AfterID: cur.ID, PageLimit: int32(limit + 1)})
+	if q.ParentID != "" {
+		// Episodes are a bounded series view, not a title-sorted catalog page.
+		// Return them together so every season can be rendered with its episodes.
+		rows, e := s.DB.CatalogEpisodes(ctx, store.CatalogEpisodesParams{ParentID: q.ParentID, IsAdmin: p.Role == "admin", UserID: p.ID})
+		if e != nil {
+			return v, e
+		}
+		for _, i := range rows {
+			v.Items = append(v.Items, s.itemDTO(ctx, i))
+		}
+		return v, nil
+	}
+	rows, e := s.DB.ListItems(ctx, store.ListItemsParams{Artist: q.Artist, TopLevel: q.TopLevel, IsAdmin: p.Role == "admin", UserID: p.ID, LibraryID: q.LibraryID, ParentID: q.ParentID, Kind: q.Kind, PersonID: q.PersonID, Search: q.Search, Favorites: q.Favorites, Resume: q.Resume, AfterUpdatedAt: cur.UpdatedAt, AfterTitle: cur.Title, AfterID: cur.ID, PageLimit: int32(limit + 1)})
 	if e != nil {
 		return v, e
 	}
@@ -133,7 +159,15 @@ func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) 
 	}
 	if v.HasMore {
 		last := rows[len(rows)-1]
-		data, _ := json.Marshal(cursor{last.SortTitle, last.ID, fingerprint})
+		next := cursor{Title: last.SortTitle, ID: last.ID, Fingerprint: fingerprint}
+		if q.Resume {
+			state, err := s.DB.GetState(ctx, store.GetStateParams{UserID: p.ID, ItemID: last.ID})
+			if err != nil {
+				return v, err
+			}
+			next.UpdatedAt = state.UpdatedAt.Format(time.RFC3339Nano)
+		}
+		data, _ := json.Marshal(next)
 		v.NextCursor = base64.RawURLEncoding.EncodeToString(data)
 	}
 	return v, nil
@@ -187,7 +221,7 @@ func (s *Server) detail(ctx context.Context, id string) (DetailDTO, error) {
 	for _, f := range files {
 		var probe media.Probe
 		_ = json.Unmarshal(f.Probe, &probe)
-		d := FileDTO{ID: f.ID, Name: filepath.Base(f.Path), Size: f.Size, Duration: f.Duration, Available: f.Available, Tracks: []TrackDTO{}}
+		d := FileDTO{Container: sourceContainer(probe, f.Path), ID: f.ID, Name: filepath.Base(f.Path), Size: f.Size, Duration: f.Duration, Available: f.Available, Tracks: []TrackDTO{}}
 		for _, t := range probe.Streams {
 			if t.Disposition.AttachedPic != 0 {
 				continue
@@ -195,7 +229,7 @@ func (s *Server) detail(ctx context.Context, id string) (DetailDTO, error) {
 			if t.Type == "video" && t.Disposition.AttachedPic == 0 && d.Width == 0 {
 				d.Width, d.Height = t.Width, t.Height
 			}
-			d.Tracks = append(d.Tracks, TrackDTO{t.Index, t.Type, t.Codec, t.Tags["language"], t.Tags["title"]})
+			d.Tracks = append(d.Tracks, trackDTO(t))
 		}
 		v.Files = append(v.Files, d)
 	}

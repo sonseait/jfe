@@ -5289,6 +5289,153 @@
         ]
       }
     },
+    "/api/v1/items/{id}/metadata/refresh": {
+      "post": {
+        "operationId": "refreshItemMetadata",
+        "summary": "refreshItemMetadata",
+        "tags": [
+          "jfe"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetadataRefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/items/{id}/state": {
       "put": {
         "operationId": "setItemState",
@@ -7005,7 +7152,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "pattern": "^(original|index[.]m3u8|segment-[0-9]{6}[.]ts)$",
+              "pattern": "^(original|stream[.]mp4|index[.]m3u8|segment-[0-9]{6}[.]ts)$",
               "type": "string"
             }
           }
@@ -8070,7 +8217,8 @@
           "subtitleOutline": {
             "maximum": 10,
             "minimum": 0,
-            "type": "integer"
+            "multipleOf": 0.5,
+            "type": "number"
           },
           "subtitleSize": {
             "maximum": 72,
@@ -8113,6 +8261,9 @@
         "properties": {
           "available": {
             "type": "boolean"
+          },
+          "container": {
+            "type": "string"
           },
           "duration": {
             "type": "number"
@@ -8391,6 +8542,10 @@
       "ItemDTO": {
         "additionalProperties": false,
         "properties": {
+          "duration": {
+            "minimum": 0,
+            "type": "number"
+          },
           "episode": {
             "type": "integer"
           },
@@ -8452,7 +8607,8 @@
           "metadataLocked",
           "favorite",
           "watched",
-          "position"
+          "position",
+          "duration"
         ],
         "type": "object"
       },
@@ -8756,6 +8912,22 @@
         ],
         "type": "object"
       },
+      "MetadataRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "replace",
+              "missing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
       "MetadataRequest": {
         "additionalProperties": false,
         "properties": {
@@ -8888,9 +9060,51 @@
         ],
         "type": "object"
       },
+      "PlaybackCapabilitiesDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "audio": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "containers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "remux": {
+            "type": "boolean"
+          },
+          "remuxAudio": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "video": {
+            "items": {
+              "$ref": "#/components/schemas/VideoCapabilityDTO"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "containers",
+          "video",
+          "audio",
+          "remux"
+        ],
+        "type": "object"
+      },
       "PlaybackDTO": {
         "additionalProperties": false,
         "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/PlaybackDecisionDTO"
+          },
           "duration": {
             "type": "number"
           },
@@ -8902,6 +9116,9 @@
           },
           "position": {
             "type": "number"
+          },
+          "protocol": {
+            "type": "string"
           },
           "state": {
             "type": "string"
@@ -8926,12 +9143,64 @@
         ],
         "type": "object"
       },
+      "PlaybackDecisionDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "audioAction": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "direct_play",
+              "remux",
+              "transcode"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "subtitleAction": {
+            "type": "string"
+          },
+          "subtitleId": {
+            "type": "string"
+          },
+          "toneMapped": {
+            "type": "boolean"
+          },
+          "videoAction": {
+            "type": "string"
+          },
+          "videoCodec": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "videoAction",
+          "audioAction",
+          "subtitleAction",
+          "container",
+          "reason"
+        ],
+        "type": "object"
+      },
       "PlaybackRequest": {
         "additionalProperties": false,
         "properties": {
           "audioIndex": {
             "minimum": -1,
             "type": "integer"
+          },
+          "autoQuality": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/PlaybackCapabilitiesDTO"
           },
           "directPlay": {
             "type": "boolean"
@@ -8992,6 +9261,9 @@
           },
           "bitrateSource": {
             "type": "string"
+          },
+          "toneMapped": {
+            "type": "boolean"
           },
           "totalBitrate": {
             "type": "integer"
@@ -9125,7 +9397,7 @@
         "additionalProperties": false,
         "properties": {
           "file": {
-            "pattern": "^(original|index[.]m3u8|segment-[0-9]{6}[.]ts)$",
+            "pattern": "^(original|stream[.]mp4|index[.]m3u8|segment-[0-9]{6}[.]ts)$",
             "type": "string"
           },
           "id": {
@@ -9309,8 +9581,32 @@
       "TrackDTO": {
         "additionalProperties": false,
         "properties": {
+          "bitDepth": {
+            "type": "integer"
+          },
+          "bitrate": {
+            "type": "integer"
+          },
+          "channels": {
+            "type": "integer"
+          },
           "codec": {
             "type": "string"
+          },
+          "codecTag": {
+            "type": "string"
+          },
+          "externalSubtitle": {
+            "type": "boolean"
+          },
+          "frameRate": {
+            "type": "number"
+          },
+          "hdrFormat": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
           },
           "index": {
             "type": "integer"
@@ -9318,11 +9614,32 @@
           "language": {
             "type": "string"
           },
+          "level": {
+            "type": "integer"
+          },
+          "pixelFormat": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "sampleRate": {
+            "type": "integer"
+          },
+          "subtitleId": {
+            "type": "string"
+          },
+          "subtitleType": {
+            "type": "string"
+          },
           "title": {
             "type": "string"
           },
           "type": {
             "type": "string"
+          },
+          "width": {
+            "type": "integer"
           }
         },
         "required": [
@@ -9427,6 +9744,46 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "VideoCapabilityDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "bitDepth": {
+            "maximum": 16,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "hdrFormat": {
+            "type": "string"
+          },
+          "level": {
+            "type": "integer"
+          },
+          "maxHeight": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxWidth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "codec",
+          "profile",
+          "bitDepth",
+          "level",
+          "maxWidth",
+          "maxHeight",
+          "hdrFormat"
         ],
         "type": "object"
       },

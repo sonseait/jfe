@@ -242,3 +242,33 @@ Use **Edit file tags** to review selected fields before submitting file-write jo
 Admin grants import permissions per library in user settings; that permission also
 allows editing all audio files in that shared library. **Import audio** manages
 YouTube sources, jobs, subscriptions and downloader settings.
+
+On a show detail page, **Refresh metadata** opens a separate dialog offering
+**Replace all metadata** (with confirmation)
+or **Only episodes missing metadata**. Missing means an episode has no TMDB ID.
+The latter requires an identified show and preserves show metadata and episodes
+that already have a TMDB ID. Both modes respect episode metadata locks.
+
+Home's **Pick up where you left off** rail shows the eight most recently updated
+unfinished items, including show episodes. Each card displays the saved position
+and a progress bar; playback progress saves refresh the rail immediately.
+
+Video playback defaults to **Auto (network speed)** when NVENC transcoding is
+enabled. It uses measured download throughput to adjust bitrate and resolution
+while preserving the playback position; manual quality choices remain fixed.
+Matching subtitles are selected using the interface language, including
+`vi`/`vie`, Vietnamese and Tiếng Việt labels. Matching uploaded text subtitles
+work with transcoding disabled. Scanner-prepared embedded/sidecar SRT/WebVTT
+also use text overlays; ASS/bitmap burn-in requires NVENC.
+
+Video playback now prefers native direct play, then video-copy fragmented MP4
+remux, then NVENC HLS. Browser support is checked against the source profile and
+bit depth, including HEVC Main10. TrueHD/DTS audio can be converted to AAC without
+encoding the HEVC video. HLS is used for video transcoding and legacy clients.
+Apply migration **00008_playback_decision** with `make -C backend migrate`, then
+rescan video libraries to populate probe version 3 and prepare text subtitles.
+HDR stays copied when the client supports it. Required NVENC transcodes convert
+HDR10/PQ and HLG to limited-range BT.709 SDR using CPU color filters; HDR10+ uses
+its static HDR10 base. FFmpeg must include libzimg (`zscale`), `tonemap`,
+`limiter` and `sidedata`. Dolby Vision conversion remains unavailable. The player
+reports HDR-to-SDR conversion. See [playback architecture](docs/architecture.md).

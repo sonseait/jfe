@@ -965,6 +965,7 @@ function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
     label: string,
     min: number,
     max: number,
+    step = 1,
   ) => (
     <label>
       {label} · {value[key]}
@@ -972,6 +973,7 @@ function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
       <Slider
         min={min}
         max={max}
+        step={step}
         value={value[key]}
         onChange={(next) => setValue((old) => ({ ...old, [key]: next }))}
       />
@@ -1022,7 +1024,7 @@ function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
             value={value.subtitleBorderColor}
             onChange={(subtitleBorderColor) => setValue((old) => ({ ...old, subtitleBorderColor }))}
           />
-          {slider('subtitleOutline', t('subtitleRender.borderWidth'), 0, 10)}
+          {slider('subtitleOutline', t('subtitleRender.borderWidth'), 0, 10, 0.5)}
           {slider('subtitleMargin', t('subtitleRender.margin'), 0, 200)}
           <div
             className="subtitle-render-preview"
@@ -1059,6 +1061,7 @@ function Jobs() {
   const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const [state, setState] = useState('all');
+  const [role, setRole] = useState('scanner');
   const libraries = useResource(
     'libraries',
     async (signal) => result(await api.GET('/api/v1/libraries', { signal })),
@@ -1071,12 +1074,13 @@ function Jobs() {
     true,
     3000,
   );
-  const workers = useResource(
-    'workers',
-    async (signal) => result(await api.GET('/api/v1/admin/workers', { signal })),
-    true,
-    10000,
-  );
+  const visible =
+    jobs.data?.items.filter(
+      (j) =>
+        j.role === role &&
+        (state === 'all' || j.state === state) &&
+        `${j.resourceName} ${j.resourceId}`.toLowerCase().includes(search.toLowerCase()),
+    ) ?? [];
   return (
     <Stack>
       <section className="task-schedules">
@@ -1100,25 +1104,28 @@ function Jobs() {
           ))}
         </State>
       </section>
-      <h2>{t('native.workers')}</h2>
-      <State loading={workers.isLoading} error={workers.error}>
-        {workers.data?.items.length ? (
-          workers.data.items.map((w) => (
-            <Group key={w.id}>
-              <Badge color="green">{w.role}</Badge>
-              <span>{new Date(w.heartbeatAt).toLocaleString()}</span>
-            </Group>
-          ))
-        ) : (
-          <Alert color="orange">{t('native.noWorkers')}</Alert>
-        )}
-      </State>
       <div className="admin-section-heading">
         <span className="eyebrow">{t('tasksAdmin.eyebrow')}</span>
         <h2>{t('manage.tasks')}</h2>
         <p>{t('tasksAdmin.description')}</p>
       </div>
-      <Group>
+      <Tabs
+        value={role}
+        onChange={(next) => setRole(next ?? 'scanner')}
+        className="task-process-tabs"
+      >
+        <Tabs.List grow>
+          {['scanner', 'transcoder', 'downloader'].map((process) => (
+            <Tabs.Tab key={process} value={process}>
+              {t(`tasksAdmin.process.${process}`)}
+              <Badge variant="light" ml={6} size="sm">
+                {jobs.data?.items.filter((j) => j.role === process).length ?? 0}
+              </Badge>
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </Tabs>
+      <Group className="task-list-controls">
         <TextInput
           className="admin-search"
           leftSection={<Search size={16} />}
@@ -1139,101 +1146,83 @@ function Jobs() {
         />
       </Group>
       <State loading={jobs.isLoading} error={jobs.error}>
-        {jobs.data?.items
-          .filter(
-            (j) =>
-              (state === 'all' || j.state === state) &&
-              `${j.resourceName} ${j.id}`.toLowerCase().includes(search.toLowerCase()),
-          )
-          .map((j) => (
-            <article className="task-card" key={j.id}>
-              <Group justify="space-between">
-                <h3>{t(`native.job.${j.kind}`)}</h3>
-                <Badge>{t(`native.state.${j.state}`)}</Badge>
-              </Group>
-              <div className="task-target">
-                <span className="eyebrow">{t('tasksAdmin.target')}</span>
-                {j.itemId ? (
-                  <Link to={`/item/${j.itemId}`}>
-                    {j.resourceName || j.resourceId}
-                    <ArrowUpRight size={16} />
-                  </Link>
-                ) : j.libraryId ? (
-                  <Link to={`/library/${j.libraryId}`}>
-                    {j.resourceName || j.resourceId}
-                    <ArrowUpRight size={16} />
-                  </Link>
-                ) : (
-                  <strong>{j.resourceName || j.resourceId}</strong>
-                )}
-                <p>{t(`tasksAdmin.${j.kind}`)}</p>
-              </div>
-              <dl className="task-facts">
-                <div>
-                  <dt>{t('tasksAdmin.worker')}</dt>
-                  <dd>{j.role}</dd>
-                </div>
-                <div>
-                  <dt>{t('tasksAdmin.attempts')}</dt>
-                  <dd>{j.attempts} / 3</dd>
-                </div>
-                <div>
-                  <dt>{t('tasksAdmin.created')}</dt>
-                  <dd>{new Date(j.createdAt).toLocaleString()}</dd>
-                </div>
-                <div>
-                  <dt>{t('tasksAdmin.updated')}</dt>
-                  <dd>{new Date(j.updatedAt).toLocaleString()}</dd>
-                </div>
-              </dl>
-              <details className="task-diagnostics">
-                <summary>{t('tasksAdmin.diagnostics')}</summary>
-                <code>{j.id}</code>
-                <p>{t('tasksAdmin.logHint')}</p>
-              </details>
-              {j.kind === 'scan' && (
-                <>
-                  <p>
-                    {j.processedFiles}/{j.totalFiles} · {j.progress}%
-                  </p>
-                  <Progress value={j.progress} animated={j.state === 'running'} />
-                </>
-              )}
-              {j.error && (
-                <Alert color="red">
-                  {j.error === 'Metadata match is ambiguous or missing; identify this item manually'
-                    ? t('metadata.ambiguous')
-                    : j.error === 'TMDB_TOKEN not configured'
-                      ? t('metadata.providerUnavailable')
-                      : ['youtube_preview', 'youtube_download', 'audio_tags'].includes(j.kind)
-                        ? t(audioErrorKey(j.error))
-                        : j.error}
-                </Alert>
-              )}
-              {j.cancelRequested && j.state === 'running' && (
-                <Alert color="orange">{t('tasksAdmin.cancelling')}</Alert>
-              )}
-              {['pending', 'running'].includes(j.state) && (
-                <Button
-                  variant="subtle"
-                  disabled={j.cancelRequested}
-                  onClick={() =>
-                    void mutate(async () =>
-                      result(
-                        await api.POST('/api/v1/admin/jobs/{id}/cancel', {
-                          params: { path: { id: j.id } },
-                        }),
-                      ),
-                    )
-                  }
-                >
-                  {t('cancel')}
-                </Button>
-              )}
-            </article>
+        <div className="task-list">
+          {visible.map((j) => (
+            <TaskCard key={j.id} job={j} />
           ))}
+          {!visible.length && <p className="muted">{t('tasksAdmin.empty')}</p>}
+        </div>
       </State>
     </Stack>
+  );
+}
+function TaskCard({ job }: { job: DTO<'JobDTO'> }) {
+  const { t } = useTranslation();
+  const target = job.resourceName || job.resourceId;
+  const targetNode = job.itemId ? (
+    <Link to={`/item/${job.itemId}`}>
+      {target}
+      <ArrowUpRight size={15} />
+    </Link>
+  ) : job.libraryId ? (
+    <Link to={`/library/${job.libraryId}`}>
+      {target}
+      <ArrowUpRight size={15} />
+    </Link>
+  ) : (
+    <strong>{target}</strong>
+  );
+  const error =
+    job.error === 'Metadata match is ambiguous or missing; identify this item manually'
+      ? t('metadata.ambiguous')
+      : job.error === 'TMDB_TOKEN not configured'
+        ? t('metadata.providerUnavailable')
+        : ['youtube_preview', 'youtube_download', 'audio_tags'].includes(job.kind)
+          ? t(audioErrorKey(job.error))
+          : job.error;
+  return (
+    <article className="task-card">
+      <div className="task-main">
+        <div>
+          <span className="task-kind">{t(`native.job.${job.kind}`)}</span>
+          {targetNode}
+          <small>{new Date(job.updatedAt).toLocaleString()}</small>
+        </div>
+        <Badge color={job.state === 'failed' ? 'red' : job.state === 'running' ? 'blue' : 'gray'}>
+          {t(`native.state.${job.state}`)}
+        </Badge>
+      </div>
+      {job.kind === 'scan' && (
+        <div className="task-progress">
+          <span>
+            {job.processedFiles}/{job.totalFiles}
+          </span>
+          <Progress value={job.progress} animated={job.state === 'running'} />
+        </div>
+      )}
+      {error && <Alert color="red">{error}</Alert>}
+      {job.cancelRequested && job.state === 'running' && (
+        <Alert color="orange">{t('tasksAdmin.cancelling')}</Alert>
+      )}
+      {['pending', 'running'].includes(job.state) && (
+        <Button
+          size="compact-sm"
+          variant="subtle"
+          disabled={job.cancelRequested}
+          onClick={() =>
+            void mutate(async () =>
+              result(
+                await api.POST('/api/v1/admin/jobs/{id}/cancel', {
+                  params: { path: { id: job.id } },
+                }),
+              ),
+            )
+          }
+        >
+          {t('cancel')}
+        </Button>
+      )}
+    </article>
   );
 }
 export function MetadataEditor({

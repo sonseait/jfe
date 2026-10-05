@@ -29,7 +29,7 @@ for suite in migrations server worker; do
 
   PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "INSERT INTO settings VALUES ('sentinel', '{}')"
   migrate -path db/migrations -database "$JFE_TEST_SCHEMA_URL" up
-  [[ $(PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -XAt -v ON_ERROR_STOP=1 -c 'SELECT version=7 AND NOT dirty FROM schema_migrations') == t ]]
+  [[ $(PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -XAt -v ON_ERROR_STOP=1 -c 'SELECT version=8 AND NOT dirty FROM schema_migrations') == t ]]
   PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c 'UPDATE schema_migrations SET dirty=true'
   if migrate -path db/migrations -database "$JFE_TEST_SCHEMA_URL" up >"$work/dirty.log" 2>&1; then
     echo 'Expected migrate CLI to reject a dirty schema' >&2
@@ -38,7 +38,8 @@ for suite in migrations server worker; do
   grep -qi dirty "$work/dirty.log"
   [[ $(PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -XAt -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM settings WHERE key='sentinel'") == 1 ]]
   PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c 'UPDATE schema_migrations SET dirty=false'
-  migrate -path db/migrations -database "$JFE_TEST_SCHEMA_URL" down 4
+  # Return to version 3 so the legacy encoding-policy migration runs again.
+  migrate -path db/migrations -database "$JFE_TEST_SCHEMA_URL" down 5
   PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "UPDATE settings SET value=jsonb_build_object('threads',4,'crf',19,'maxConcurrent',3) WHERE key='encoding'"
   migrate -path db/migrations -database "$JFE_TEST_SCHEMA_URL" up
   [[ $(PGOPTIONS="-c search_path=$schema" psql "$JFE_TEST_DATABASE_URL" -XAt -v ON_ERROR_STOP=1 -c "SELECT value->>'mode'='disabled' AND (value->>'cq')::int=19 AND (value->>'maxConcurrent')::int=3 AND NOT value ? 'threads' FROM settings WHERE key='encoding'") == t ]]

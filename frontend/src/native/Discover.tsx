@@ -1,6 +1,16 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Button, Group, ScrollArea, Skeleton } from '@mantine/core';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Clock3, Film, Library, Music2, Play, Tv } from 'lucide-react';
+import { Button, Group, Progress, ScrollArea, Skeleton } from '@mantine/core';
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  Clock3,
+  Film,
+  Library,
+  Music2,
+  Play,
+  Tv,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -269,9 +279,19 @@ export default function Discover() {
                     {isAudioItem(item.kind)
                       ? t(`audioUI.${item.kind}`)
                       : item.kind === 'episode'
-                      ? `S${item.season} · E${item.episode}`
-                      : item.year || t('movies')}
+                        ? `S${item.season} · E${item.episode}`
+                        : item.year || t('movies')}
                   </span>
+                  <Progress
+                    className="discover-resume-progress"
+                    value={
+                      item.duration > 0
+                        ? Math.min(100, Math.max(0, (item.position / item.duration) * 100))
+                        : 0
+                    }
+                    aria-label={t('detail.watchProgress')}
+                    size="xs"
+                  />
                 </div>
                 <button
                   className="discover-resume-play"

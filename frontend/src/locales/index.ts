@@ -5,6 +5,7 @@ import { initReactI18next } from 'react-i18next';
 const strings: Record<string, [string, string]> = {
   ...adminStrings,
   ...audioStrings,
+  'playerQuality.auto': ['Auto (network speed)', 'Tự động (theo tốc độ mạng)'],
   'general.title': ['General settings', 'Cài đặt chung'],
   'general.liveHelp': [
     'Changes apply without restarting the server.',
@@ -93,6 +94,7 @@ const strings: Record<string, [string, string]> = {
   'cast.more': ['Load more', 'Xem thêm'],
   'playerStream.label': ['Playback stream', 'Luồng phát video'],
   'playerStream.measuring': ['Measuring bitrate…', 'Đang đo bitrate…'],
+  'playerStream.toneMapped': ['HDR converted to SDR (BT.709)', 'HDR đã chuyển sang SDR (BT.709)'],
   'playerStream.hls': ['HLS', 'HLS'],
   'playerStream.hlsHelp': [
     'Output encoding details unavailable for this session',
@@ -150,6 +152,10 @@ const strings: Record<string, [string, string]> = {
   'tasksAdmin.search': ['Search title or job ID', 'Tìm tên phim hoặc ID tác vụ'],
   'tasksAdmin.status': ['Task status', 'Trạng thái tác vụ'],
   'tasksAdmin.all': ['All statuses', 'Mọi trạng thái'],
+  'tasksAdmin.empty': ['No tasks in this process.', 'Không có tác vụ cho tiến trình này.'],
+  'tasksAdmin.process.scanner': ['Library & metadata', 'Thư viện & metadata'],
+  'tasksAdmin.process.transcoder': ['Playback', 'Phát nội dung'],
+  'tasksAdmin.process.downloader': ['Audio & imports', 'Audio & nhập liệu'],
   'usersAdmin.eyebrow': ['PEOPLE & PERMISSIONS', 'TÀI KHOẢN & PHÂN QUYỀN'],
   'usersAdmin.description': [
     'Manage who can sign in and which libraries they can watch.',
@@ -238,6 +244,25 @@ const strings: Record<string, [string, string]> = {
     'Áp dụng sẽ tạo tác vụ cập nhật tên, năm, nội dung và ảnh bìa. Các chỉnh sửa thủ công chưa lưu không được áp dụng. Theo dõi trong Tác vụ.',
   ],
   'metadata.apply': ['Apply selected match', 'Áp dụng kết quả đã chọn'],
+  'metadata.refreshSeries': ['Refresh metadata', 'Cập nhật metadata'],
+  'metadata.refreshMode': ['Update mode', 'Chế độ cập nhật'],
+  'metadata.replaceAll': ['Replace all metadata', 'Thay thế toàn bộ metadata'],
+  'metadata.missingOnly': [
+    'Only episodes missing metadata',
+    'Chỉ cập nhật các tập còn thiếu metadata',
+  ],
+  'metadata.missingHelp': [
+    'Missing episodes have no TMDB ID. Existing metadata and locked episodes are preserved.',
+    'Tập còn thiếu là tập chưa có TMDB ID. Giữ nguyên metadata đã có và các tập đã khóa.',
+  ],
+  'metadata.identifyFirst': [
+    'Identify the series first to update missing episodes.',
+    'Hãy xác định bộ phim trước khi cập nhật các tập còn thiếu.',
+  ],
+  'metadata.replaceConfirm': [
+    'Replace metadata for this series and all unlocked episodes? Locked metadata will be preserved.',
+    'Thay thế metadata của bộ phim và tất cả tập chưa khóa? Metadata đã khóa sẽ được giữ nguyên.',
+  ],
   'detail.inYourLibrary': ['FROM YOUR COLLECTION', 'TRONG BỘ SƯU TẬP CỦA BẠN'],
   'detail.backToSeries': ['Back to series', 'Về bộ phim'],
   'detail.episode': ['Season {{season}} · Episode {{episode}}', 'Mùa {{season}} · Tập {{episode}}'],
@@ -410,6 +435,10 @@ const strings: Record<string, [string, string]> = {
   'native.encodingDisabled': ['Disabled', 'Tắt chuyển mã'],
   'native.nvencCQ': ['NVENC quality (CQ)', 'Chất lượng NVENC (CQ)'],
   'native.gpuDevice': ['NVIDIA GPU index', 'Chỉ số GPU NVIDIA'],
+  'native.hdrTranscodingUnavailable': [
+    'This HDR color format cannot be converted to SDR.',
+    'Định dạng màu HDR này chưa thể chuyển sang SDR.',
+  ],
   'native.transcodingDisabled': [
     'Video transcoding is disabled. Only compatible original video or remux is available.',
     'Đã tắt chuyển mã video. Chỉ phát bản gốc tương thích hoặc remux.',

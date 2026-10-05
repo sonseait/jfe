@@ -57,12 +57,16 @@ ON CONFLICT(item_id,path) DO UPDATE SET item_id=excluded.item_id,size=excluded.s
 SELECT * FROM items WHERE id=$1;
 -- name: SeriesEpisodes :many
 SELECT * FROM items WHERE parent_id=$1 AND kind='episode' ORDER BY season,episode,sort_title,id;
+-- name: CatalogEpisodes :many
+SELECT i.* FROM items i WHERE i.parent_id=sqlc.arg(parent_id)::text AND i.kind='episode'
+AND (sqlc.arg(is_admin)::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=sqlc.arg(user_id)::text))
+ORDER BY i.season,i.episode,i.sort_title,i.id;
 -- name: ListItems :many
-SELECT i.* FROM items i WHERE
+SELECT i.* FROM items i LEFT JOIN user_state resume_state ON resume_state.item_id=i.id AND resume_state.user_id=sqlc.arg(user_id)::text WHERE
 (sqlc.arg(is_admin)::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=sqlc.arg(user_id)::text))
 AND (sqlc.arg(library_id)::text='' OR i.library_id=sqlc.arg(library_id))
 AND (sqlc.arg(parent_id)::text='' OR i.parent_id=sqlc.arg(parent_id))
-AND (sqlc.arg(library_id)::text='' OR sqlc.arg(parent_id)::text<>'' OR sqlc.arg(kind)::text<>'' OR i.parent_id='')
+AND (sqlc.arg(resume)::boolean OR sqlc.arg(library_id)::text='' OR sqlc.arg(parent_id)::text<>'' OR sqlc.arg(kind)::text<>'' OR i.parent_id='')
 AND (sqlc.arg(kind)::text='' OR i.kind=sqlc.arg(kind))
 AND (NOT sqlc.arg(top_level)::boolean OR i.parent_id='' OR (sqlc.arg(search)::text<>'' AND i.kind IN ('track','podcast_episode','book_part')))
 AND (sqlc.arg(artist)::text='' OR EXISTS(SELECT 1 FROM audio_metadata a JOIN items child ON child.id=a.item_id WHERE (child.id=i.id OR child.parent_id=i.id) AND a.tags->'artists' ? sqlc.arg(artist)))
@@ -70,8 +74,13 @@ AND (sqlc.arg(person_id)::text='' OR i.cast_members @> jsonb_build_array(jsonb_b
 AND (sqlc.arg(search)::text='' OR i.title ILIKE '%'||sqlc.arg(search)||'%' OR EXISTS(SELECT 1 FROM audio_metadata a WHERE a.item_id=i.id AND a.tags->>'artists' ILIKE '%'||sqlc.arg(search)||'%'))
 AND (NOT sqlc.arg(favorites)::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=sqlc.arg(user_id) AND s.item_id=i.id AND s.favorite))
 AND (NOT sqlc.arg(resume)::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=sqlc.arg(user_id) AND s.item_id=i.id AND s.position>0 AND NOT s.watched))
-AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text)
-ORDER BY i.sort_title,i.id LIMIT sqlc.arg(page_limit);
+AND (
+  (NOT sqlc.arg(resume)::boolean AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text))
+  OR (sqlc.arg(resume)::boolean AND (sqlc.arg(after_updated_at)::text='' OR
+    resume_state.updated_at < NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz OR
+    (resume_state.updated_at = NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text))))
+)
+ORDER BY CASE WHEN sqlc.arg(resume)::boolean THEN resume_state.updated_at END DESC, i.sort_title,i.id LIMIT sqlc.arg(page_limit);
 -- name: ItemFiles :many
 SELECT * FROM media_files WHERE item_id=$1 ORDER BY path;
 -- name: GetFile :one
@@ -120,7 +129,7 @@ SELECT * FROM workers WHERE heartbeat_at>now()-interval '60 seconds' ORDER BY ro
 -- name: ReapJobs :exec
 UPDATE jobs SET state=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,error='Worker lease expired',updated_at=now() WHERE state='running' AND lease_until<now() AND (cancel_requested OR role='transcoder' OR attempts>=3);
 -- name: StartPlayback :exec
-INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9);
+INSERT INTO playback_sessions(id,user_id,item_id,file_id,token_hash,method,state,start_position,position,expires_at,decision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,COALESCE(sqlc.narg('decision')::jsonb,'{}'::jsonb));
 -- name: GetPlayback :one
 SELECT * FROM playback_sessions WHERE id=$1;
 -- name: SetPlaybackReady :exec

@@ -2,6 +2,7 @@
 .PHONY: help install dev generate typecheck lint test check build preview test-e2e format format-check docker-build docker-push
 
 OPENAPI_SOURCE ?= ../backend/openapi.json
+E2E_ARGS ?=
 REGISTRY ?= sgp.vultrcr.com/695w
 IMAGE_NAME ?= jfe-frontend
 IMAGE_TAG ?= latest
@@ -39,7 +40,7 @@ preview:
 	pnpm preview
 
 test-e2e:
-	pnpm test:e2e
+	pnpm test:e2e $(E2E_ARGS)
 
 format:
 	pnpm format

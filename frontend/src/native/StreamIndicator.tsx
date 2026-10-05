@@ -48,6 +48,7 @@ export function StreamIndicator({
       <Popover.Dropdown className="playback-stream-details">
         <strong>{t('playerStream.label')}</strong>
         <p>{t(`playerStream.${mode}Help`)}</p>
+        {stream?.toneMapped && <p>{t('playerStream.toneMapped')}</p>}
         <dl>
           <dt>{t('playerStream.resolution')}</dt>
           <dd>

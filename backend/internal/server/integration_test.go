@@ -229,6 +229,39 @@ SELECT $1,library_id,'movie','ZZ Cast Film','zz cast film',cast_members FROM ite
 		t.Fatal(err)
 	}
 	searchURL := "/api/v1/items?search=ZZ%20Cast&topLevel=true&limit=1"
+	refreshURL := "/api/v1/items/" + searchSeries + "/metadata/refresh"
+	for _, token := range []string{"", viewer.Token} {
+		want := 403
+		if token == "" {
+			want = 401
+		}
+		if call("POST", refreshURL, token, MetadataRefreshRequest{Mode: "missing"}, nil) != want {
+			t.Fatal("metadata refresh authorization bypassed")
+		}
+	}
+	for _, body := range []any{map[string]string{}, MetadataRefreshRequest{Mode: "invalid"}, MetadataRefreshRequest{Mode: "missing"}} {
+		if call("POST", refreshURL, login.Token, body, nil) != 422 {
+			t.Fatal("invalid refresh request accepted")
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE items SET provider_id='42' WHERE id=$1`, searchSeries); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"missing", "replace"} {
+		var refreshJob JobDTO
+		if call("POST", refreshURL, login.Token, MetadataRefreshRequest{Mode: mode}, &refreshJob) != 200 {
+			t.Fatal("refresh rejected")
+		}
+		var stored []byte
+		err := pool.QueryRow(ctx, `SELECT payload FROM jobs WHERE id=$1`, refreshJob.ID).Scan(&stored)
+		var payload MetadataRefreshRequest
+		if err != nil || json.Unmarshal(stored, &payload) != nil || payload.Mode != mode {
+			t.Fatalf("refresh mode not persisted: %s %v", stored, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM jobs WHERE id=$1`, refreshJob.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var titles ItemsDTO
 	if call("GET", searchURL, login.Token, nil, &titles) != 200 || len(titles.Items) != 1 || titles.Items[0].ID != otherCastItem || !titles.HasMore {
 		t.Fatalf("top-level filter must run before pagination: %+v", titles)
@@ -331,6 +364,11 @@ SELECT $1,library_id,'movie','ZZ Cast Film','zz cast film',cast_members FROM ite
 	if res.StatusCode != 206 || len(b) != 32 {
 		t.Fatalf("range %d %d", res.StatusCode, len(b))
 	}
+	call("POST", "/api/v1/playback/"+playback.ID+"/progress", login.Token, ProgressRequest{Sequence: 1, Position: playback.Duration * 0.25}, nil)
+	var resume ItemsDTO
+	if call("GET", "/api/v1/items?resume=true&limit=8", login.Token, nil, &resume) != 200 || len(resume.Items) != 1 || resume.Items[0].Position != playback.Duration*0.25 || resume.Items[0].Duration != playback.Duration {
+		t.Fatalf("resume catalog: %+v", resume)
+	}
 	if call("PATCH", "/api/v1/admin/settings", login.Token, map[string]any{"watchedPercent": 50}, nil) != 200 {
 		t.Fatal("watched threshold update failed")
 	}
@@ -339,6 +377,9 @@ SELECT $1,library_id,'movie','ZZ Cast Film','zz cast film',cast_members FROM ite
 	call("GET", "/api/v1/items/"+items.Items[0].ID, login.Token, nil, &detail)
 	if detail.Item.Position != playback.Duration*0.6 || !detail.Item.Watched {
 		t.Fatal("stale progress overwrote newer sample")
+	}
+	if call("GET", "/api/v1/items?resume=true", login.Token, nil, &resume) != 200 || len(resume.Items) != 0 {
+		t.Fatalf("completed item remains in resume: %+v", resume)
 	}
 	call("DELETE", "/api/v1/playback/"+playback.ID, login.Token, nil, nil)
 	if call("GET", playback.URL+"?token="+playback.StreamToken, "", nil, nil) != 403 {
@@ -440,6 +481,88 @@ SELECT $1,library_id,'movie','ZZ Cast Film','zz cast film',cast_members FROM ite
 		t.Fatalf("manifest: %d %s", res.StatusCode, b)
 	}
 	call("DELETE", "/api/v1/playback/"+playback.ID, login.Token, nil, nil)
+
+	// Source-aware clients keep originals native and use fMP4 for remux.
+	var sourceVideo TrackDTO
+	for _, track := range detail.Files[0].Tracks {
+		if track.Type == "video" {
+			sourceVideo = track
+		}
+	}
+	capabilities := &PlaybackCapabilitiesDTO{Containers: []string{"mp4"}, Audio: []string{"aac"}, Remux: true, Video: []VideoCapabilityDTO{{Codec: sourceVideo.Codec, Profile: sourceVideo.Profile, BitDepth: sourceVideo.BitDepth, Level: sourceVideo.Level, MaxWidth: sourceVideo.Width, MaxHeight: sourceVideo.Height}}}
+	modern := PlaybackRequest{FileID: request.FileID, AudioIndex: -1, SubtitleIndex: -1, DirectPlay: true, Capabilities: capabilities}
+	if call("POST", "/api/v1/playback", login.Token, modern, &playback) != 200 || playback.Decision == nil || playback.Decision.Mode != PlaybackModeDirectPlay || playback.Protocol != "file" {
+		t.Fatalf("modern original: %+v", playback)
+	}
+	var directJobs int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM jobs WHERE resource_id=$1", playback.ID).Scan(&directJobs); err != nil || directJobs != 0 {
+		t.Fatalf("direct play enqueued FFmpeg: %d %v", directJobs, err)
+	}
+	call("DELETE", "/api/v1/playback/"+playback.ID, login.Token, nil, nil)
+	// A direct decode/container failure restarts at the requested position with copy.
+	modern.DirectPlay = false
+	modern.Position = 1
+	if call("POST", "/api/v1/playback", login.Token, modern, &playback) != 200 || playback.Protocol != "mp4" || playback.Decision.VideoAction != "copy" || playback.Decision.AudioAction != "copy" {
+		t.Fatalf("modern remux: %+v", playback)
+	}
+	streamToken = playback.StreamToken
+	for until := time.Now().Add(15 * time.Second); time.Now().Before(until); {
+		call("GET", "/api/v1/playback/"+playback.ID, login.Token, nil, &playback)
+		if playback.State == "ready" || playback.State == "failed" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if playback.State != "ready" || playback.Position != 1 {
+		t.Fatalf("fMP4: %+v", playback)
+	}
+	req = httptest.NewRequest("GET", playback.URL+"?token="+streamToken, nil)
+	req.Header.Set("Range", "bytes=0-1023")
+	res, e = s.App.Test(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 206 || !strings.HasPrefix(res.Header.Get("Content-Type"), "video/mp4") || !bytes.Contains(b, []byte("ftyp")) {
+		t.Fatalf("fMP4 response: %d %v", res.StatusCode, res.Header)
+	}
+	req = httptest.NewRequest("GET", playback.URL+"?token=invalid", nil)
+	res, e = s.App.Test(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	res.Body.Close()
+	if res.StatusCode != 403 {
+		t.Fatal("remux token not enforced")
+	}
+	call("DELETE", "/api/v1/playback/"+playback.ID, login.Token, nil, nil)
+	req = httptest.NewRequest("GET", playback.URL+"?token="+streamToken, nil)
+	res, e = s.App.Test(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	res.Body.Close()
+	if res.StatusCode != 403 {
+		t.Fatal("stopped remux still accessible")
+	}
+	// Scanner-prepared sidecar cues are available through the existing overlay API.
+	var textSubtitles SubtitlesDTO
+	call("GET", subtitleURL, login.Token, nil, &textSubtitles)
+	prepared := false
+	for _, sub := range textSubtitles.Items {
+		if !strings.HasSuffix(sub.Name, " srt") {
+			continue
+		}
+		var document SubtitleDocument
+		if call("GET", subtitleURL+"/"+sub.ID, login.Token, nil, &document) != 200 || len(document.Cues) != 1 || document.Cues[0].Text != "Hello JFE" {
+			t.Fatalf("prepared subtitles: %+v", document)
+		}
+		prepared = true
+	}
+	if !prepared {
+		t.Fatal("scanner did not prepare text subtitles")
+	}
 	encoding.Mode = "nvidia"
 	if call("PUT", "/api/v1/admin/encoding", login.Token, encoding, nil) != 200 {
 		t.Fatal("NVIDIA mode rejected")

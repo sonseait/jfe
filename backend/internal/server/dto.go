@@ -129,6 +129,7 @@ type ItemDTO struct {
 	Favorite       bool    `json:"favorite"`
 	Watched        bool    `json:"watched"`
 	Position       float64 `json:"position"`
+	Duration       float64 `json:"duration" jsonschema:"minimum=0"`
 }
 type ItemsDTO struct {
 	Items      []ItemDTO `json:"items"`
@@ -136,13 +137,29 @@ type ItemsDTO struct {
 	HasMore    bool      `json:"hasMore"`
 }
 type TrackDTO struct {
-	Index    int    `json:"index"`
-	Type     string `json:"type"`
-	Codec    string `json:"codec"`
-	Language string `json:"language"`
-	Title    string `json:"title"`
+	CodecTag         string  `json:"codecTag,omitempty"`
+	SubtitleID       string  `json:"subtitleId,omitempty"`
+	ExternalSubtitle bool    `json:"externalSubtitle,omitempty"`
+	Profile          string  `json:"profile,omitempty"`
+	Level            int     `json:"level,omitempty"`
+	BitDepth         int     `json:"bitDepth,omitempty"`
+	PixelFormat      string  `json:"pixelFormat,omitempty"`
+	Width            int     `json:"width,omitempty"`
+	Height           int     `json:"height,omitempty"`
+	Bitrate          int64   `json:"bitrate,omitempty"`
+	FrameRate        float64 `json:"frameRate,omitempty"`
+	HDRFormat        string  `json:"hdrFormat,omitempty"`
+	Channels         int     `json:"channels,omitempty"`
+	SampleRate       int     `json:"sampleRate,omitempty"`
+	SubtitleType     string  `json:"subtitleType,omitempty"`
+	Index            int     `json:"index"`
+	Type             string  `json:"type"`
+	Codec            string  `json:"codec"`
+	Language         string  `json:"language"`
+	Title            string  `json:"title"`
 }
 type FileDTO struct {
+	Container string     `json:"container,omitempty"`
 	Size      int64      `json:"size"`
 	Width     int        `json:"width"`
 	Height    int        `json:"height"`
@@ -198,6 +215,9 @@ type MetadataMatches struct {
 type IdentifyRequest struct {
 	ProviderID int `json:"providerId" jsonschema:"minimum=1"`
 }
+type MetadataRefreshRequest struct {
+	Mode string `json:"mode" jsonschema:"enum=replace,enum=missing"`
+}
 type JobDTO struct {
 	ResourceName    string    `json:"resourceName"`
 	ItemID          string    `json:"itemId"`
@@ -228,48 +248,82 @@ type WorkersDTO struct {
 	Items []WorkerDTO `json:"items"`
 }
 type EncodingDTO struct {
-	Mode                      string `json:"mode" jsonschema:"enum=disabled,enum=nvidia"`
-	CQ                        int    `json:"cq" jsonschema:"minimum=0,maximum=51"`
-	Device                    int    `json:"device" jsonschema:"minimum=0,maximum=31"`
-	MaxConcurrent             int    `json:"maxConcurrent" jsonschema:"minimum=1,maximum=16"`
-	Preset                    string `json:"preset" jsonschema:"enum=p1,enum=p2,enum=p3,enum=p4,enum=p5,enum=p6,enum=p7"`
-	VideoCodec                string `json:"videoCodec" jsonschema:"enum=h264,enum=hevc"`
-	Bitrate720                int    `json:"bitrate720" jsonschema:"minimum=100000,maximum=100000000"`
-	Bitrate1080               int    `json:"bitrate1080" jsonschema:"minimum=100000,maximum=100000000"`
-	Bitrate2160               int    `json:"bitrate2160" jsonschema:"minimum=100000,maximum=100000000"`
-	AudioCodec                string `json:"audioCodec" jsonschema:"enum=aac,enum=ac3"`
-	AudioBitrate              int    `json:"audioBitrate" jsonschema:"minimum=64000,maximum=1024000"`
-	SubtitleSize              int    `json:"subtitleSize" jsonschema:"minimum=12,maximum=72"`
-	SubtitleOutline           int    `json:"subtitleOutline" jsonschema:"minimum=0,maximum=10"`
-	SubtitleMargin            int    `json:"subtitleMargin" jsonschema:"minimum=0,maximum=200"`
-	SubtitleFont              string `json:"subtitleFont" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Sans CJK"`
-	SubtitleColor             string `json:"subtitleColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
-	SubtitleBackground        string `json:"subtitleBackground" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
-	SubtitleBackgroundOpacity int    `json:"subtitleBackgroundOpacity" jsonschema:"minimum=0,maximum=100"`
-	SubtitleBorderColor       string `json:"subtitleBorderColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+	Mode                      string  `json:"mode" jsonschema:"enum=disabled,enum=nvidia"`
+	CQ                        int     `json:"cq" jsonschema:"minimum=0,maximum=51"`
+	Device                    int     `json:"device" jsonschema:"minimum=0,maximum=31"`
+	MaxConcurrent             int     `json:"maxConcurrent" jsonschema:"minimum=1,maximum=16"`
+	Preset                    string  `json:"preset" jsonschema:"enum=p1,enum=p2,enum=p3,enum=p4,enum=p5,enum=p6,enum=p7"`
+	VideoCodec                string  `json:"videoCodec" jsonschema:"enum=h264,enum=hevc"`
+	Bitrate720                int     `json:"bitrate720" jsonschema:"minimum=100000,maximum=100000000"`
+	Bitrate1080               int     `json:"bitrate1080" jsonschema:"minimum=100000,maximum=100000000"`
+	Bitrate2160               int     `json:"bitrate2160" jsonschema:"minimum=100000,maximum=100000000"`
+	AudioCodec                string  `json:"audioCodec" jsonschema:"enum=aac,enum=ac3"`
+	AudioBitrate              int     `json:"audioBitrate" jsonschema:"minimum=64000,maximum=1024000"`
+	SubtitleSize              int     `json:"subtitleSize" jsonschema:"minimum=12,maximum=72"`
+	SubtitleOutline           float64 `json:"subtitleOutline" jsonschema:"minimum=0,maximum=10,multipleOf=0.5"`
+	SubtitleMargin            int     `json:"subtitleMargin" jsonschema:"minimum=0,maximum=200"`
+	SubtitleFont              string  `json:"subtitleFont" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Sans CJK"`
+	SubtitleColor             string  `json:"subtitleColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+	SubtitleBackground        string  `json:"subtitleBackground" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+	SubtitleBackgroundOpacity int     `json:"subtitleBackgroundOpacity" jsonschema:"minimum=0,maximum=100"`
+	SubtitleBorderColor       string  `json:"subtitleBorderColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
+}
+type VideoCapabilityDTO struct {
+	Codec     string `json:"codec"`
+	Profile   string `json:"profile"`
+	BitDepth  int    `json:"bitDepth" jsonschema:"minimum=0,maximum=16"`
+	Level     int    `json:"level"`
+	MaxWidth  int    `json:"maxWidth" jsonschema:"minimum=0"`
+	MaxHeight int    `json:"maxHeight" jsonschema:"minimum=0"`
+	HDRFormat string `json:"hdrFormat"`
+}
+
+// Capabilities describe tested source configurations, not browser names.
+type PlaybackCapabilitiesDTO struct {
+	RemuxAudio []string             `json:"remuxAudio,omitempty"`
+	Containers []string             `json:"containers"`
+	Video      []VideoCapabilityDTO `json:"video"`
+	Audio      []string             `json:"audio"`
+	Remux      bool                 `json:"remux"`
+}
+type PlaybackDecisionDTO struct {
+	ToneMapped     bool         `json:"toneMapped,omitempty"`
+	SubtitleID     string       `json:"subtitleId,omitempty"`
+	VideoCodec     string       `json:"videoCodec,omitempty"`
+	Mode           PlaybackMode `json:"mode" jsonschema:"enum=direct_play,enum=remux,enum=transcode"`
+	VideoAction    string       `json:"videoAction"`
+	AudioAction    string       `json:"audioAction"`
+	SubtitleAction string       `json:"subtitleAction"`
+	Container      string       `json:"container"`
+	Reason         string       `json:"reason"`
 }
 type PlaybackRequest struct {
-	ForceTranscode bool    `json:"forceTranscode,omitempty"`
-	SubtitleDelay  float64 `json:"subtitleDelay,omitempty" jsonschema:"minimum=-600,maximum=600"`
-	MaxHeight      int     `json:"maxHeight,omitempty" jsonschema:"enum=0,enum=720,enum=1080,enum=2160"`
-	FileID         string  `json:"fileId" jsonschema:"format=uuid"`
-	Position       float64 `json:"position" jsonschema:"minimum=0"`
-	DirectPlay     bool    `json:"directPlay"`
-	AudioIndex     int     `json:"audioIndex" jsonschema:"minimum=-1"`
-	SubtitleIndex  int     `json:"subtitleIndex" jsonschema:"minimum=-1"`
-	MaxBitrate     int     `json:"maxBitrate" jsonschema:"minimum=0,maximum=100000000"`
+	Capabilities   *PlaybackCapabilitiesDTO `json:"capabilities,omitempty"`
+	AutoQuality    bool                     `json:"autoQuality,omitempty"`
+	ForceTranscode bool                     `json:"forceTranscode,omitempty"`
+	SubtitleDelay  float64                  `json:"subtitleDelay,omitempty" jsonschema:"minimum=-600,maximum=600"`
+	MaxHeight      int                      `json:"maxHeight,omitempty" jsonschema:"enum=0,enum=720,enum=1080,enum=2160"`
+	FileID         string                   `json:"fileId" jsonschema:"format=uuid"`
+	Position       float64                  `json:"position" jsonschema:"minimum=0"`
+	DirectPlay     bool                     `json:"directPlay"`
+	AudioIndex     int                      `json:"audioIndex" jsonschema:"minimum=-1"`
+	SubtitleIndex  int                      `json:"subtitleIndex" jsonschema:"minimum=-1"`
+	MaxBitrate     int                      `json:"maxBitrate" jsonschema:"minimum=0,maximum=100000000"`
 }
 type PlaybackDTO struct {
-	Stream      *PlaybackStreamDTO `json:"stream,omitempty"`
-	ID          string             `json:"id"`
-	Method      string             `json:"method"`
-	State       string             `json:"state"`
-	URL         string             `json:"url"`
-	Position    float64            `json:"position"`
-	Duration    float64            `json:"duration"`
-	StreamToken string             `json:"streamToken,omitempty"`
+	Decision    *PlaybackDecisionDTO `json:"decision,omitempty"`
+	Protocol    string               `json:"protocol,omitempty"`
+	Stream      *PlaybackStreamDTO   `json:"stream,omitempty"`
+	ID          string               `json:"id"`
+	Method      string               `json:"method"`
+	State       string               `json:"state"`
+	URL         string               `json:"url"`
+	Position    float64              `json:"position"`
+	Duration    float64              `json:"duration"`
+	StreamToken string               `json:"streamToken,omitempty"`
 }
 type PlaybackStreamDTO struct {
+	ToneMapped      bool   `json:"toneMapped,omitempty"`
 	VideoTranscoded bool   `json:"videoTranscoded"`
 	VideoCodec      string `json:"videoCodec"`
 	AudioCodec      string `json:"audioCodec"`
@@ -284,7 +338,7 @@ type ProgressRequest struct {
 }
 type StreamParams struct {
 	ID   string `json:"id" jsonschema:"format=uuid"`
-	File string `json:"file" jsonschema:"pattern=^(original|index[.]m3u8|segment-[0-9]{6}[.]ts)$"`
+	File string `json:"file" jsonschema:"pattern=^(original|stream[.]mp4|index[.]m3u8|segment-[0-9]{6}[.]ts)$"`
 }
 type TokenQuery struct {
 	Token string `json:"token" jsonschema:"minLength=1"`

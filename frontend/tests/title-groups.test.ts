@@ -19,6 +19,7 @@ function movie(id: string, title: string, libraryId = 'films'): DTO<'ItemDTO'> {
     favorite: false,
     watched: false,
     position: 42,
+    duration: 120,
   };
 }
 it('groups sequels, release variants and shared name prefixes without changing items', () => {

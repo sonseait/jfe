@@ -202,3 +202,93 @@ source, video and exit-code context while completed downloads remain deduplicate
 Frontend checks/build pass with 37 tests, including Vietnamese delete confirmation,
 translated entry errors and previous errors displayed during a pending retry.
 No live YouTube download or deployed-server reproduction was performed for this fix.
+
+Metadata refresh tests cover both request modes, required/invalid mode validation,
+admin authorization, payload persistence, missing-episode scheduling, locked and
+already identified episode preservation, and execution-time rechecks. Frontend
+tests cover both choices, replacement confirmation, missing-mode submission, and
+Vietnamese labels and separation from the manual Save form. Provider responses are mocked; live TMDB is not exercised.
+
+Home resume validation (2026-10-04): backend tests/vet, disposable PostgreSQL 17
+migration/server/worker integration with generated FFmpeg fixtures, all 45
+frontend tests, typecheck, production build and lint of changed frontend files
+passed. Regression coverage includes more than eight unfinished episodes,
+recent-first ordering, timestamp ties across pages, library/user isolation,
+saved playback position/duration, removal of completed media, Home resume actions,
+English/Vietnamese progress labels and zero/overrun durations. Full frontend lint
+is currently blocked by the pre-existing unused `serverName` argument in App.tsx.
+The installed server and the user's specific media have not been verified.
+
+Playback preference validation (2026-10-04): 60 frontend tests, typecheck, build,
+changed-file lint, backend tests/vet and disposable PostgreSQL 17
+migration/server/worker integration with generated FFmpeg fixtures passed.
+Coverage includes Vietnamese aliases/track titles/upload names, English locale,
+manual subtitle Off, disabled capabilities, bandwidth budgets/headroom,
+playback speed, sustained variable samples/cooldown, bounded range probes,
+ignored Range responses, cancellation, position-preserving quality changes,
+manual quality overrides and automatic/manual server bitrate policy.
+Contracts were regenerated before frontend API types. Real NVIDIA encoding and
+adaptation on physical devices/remote networks were not verified in this run.
+The existing full-frontend lint failure in App.tsx remains outside this change.
+
+## Source-aware playback refactor
+
+Decision tests cover MP4 HEVC/AAC direct play; MKV HEVC/AAC video/audio copy;
+MKV HEVC/TrueHD and DTS video copy with audio conversion; unsupported HEVC and
+Main10 conversion; supported Main10 preservation; PGS burn-in; source profile,
+level/dimension mismatch; and prepared SRT external rendering. Probe tests cover
+Main10 depth, HDR, rational frame rate, audio channels/sample rate and PGS type.
+
+A generated libx265 HEVC/AAC MKV fixture runs through real FFmpeg stream copy
+into fMP4 and is reprobed to confirm HEVC/AAC preservation. Partial output does
+not become ready. API range tests verify 206/416, Content-Range/Content-Length,
+Accept-Ranges and immediate visibility after output growth. PostgreSQL API
+integration verifies persisted decisions, no direct-play worker job, remux at a
+requested timestamp, fMP4 ranges, token enforcement, stop revocation and scanner
+text subtitle preparation. Existing legacy HLS, auth, worker leases/recovery and
+OpenAPI/request validation tests remain in the suite. Migration 8 uses the
+external CLI and disposable PostgreSQL for up/down/dirty-schema checks.
+
+Frontend tests cover Main10 capability strings, MKV-independent video support,
+AAC remux selection, HDR decodingInfo checks and rejection without measured HDR
+support. The MSE reader test verifies bounded byte offsets, incremental appends,
+worker EOF and URL release on cancellation. Native browser/device HEVC and HDR
+support varies; generated FFmpeg fixtures do not establish support on real client
+hardware. NVENC execution requires an NVIDIA test host. Remux copy seeks depend
+on source keyframe placement.
+
+Validation on 2026-10-05: backend unit tests, go vet and disposable PostgreSQL
+integration passed. Frontend type checking and 65 unit tests passed; changed
+frontend files pass ESLint. Focused source-aware playback E2E passed on desktop
+and mobile Chromium (`make -C frontend test-e2e E2E_ARGS=playback.spec.ts`). The
+full E2E run passed its four audio/fMP4 checks but two broader app tests stopped
+at the existing fullscreen Speed-menu assertion: the current stylesheet hides
+fullscreen controls. Full frontend lint also reports the pre-existing unused
+`serverName` argument in App.tsx. Neither unrelated UI behavior was changed.
+Worker tests include active fMP4 stop/cancellation and removal while bitrate
+measurement is blocked. MSE quota eviction retries preserve the video stream;
+network/read failures do not request video conversion. The ignore rule for media
+storage is anchored to backend/media so internal/media source is visible to Git.
+
+
+## HDR tone mapping
+
+HDR10/PQ and HLG fixture tests run the actual zscale/tonemap filter chain on
+generated 10-bit HEVC patches. They verify changed, monotonic, legal-range SDR
+luminance, neutral chroma, BT.709/TV/8-bit output and removal of HDR frame
+metadata. Fixture encoding uses software encoders only in tests; production
+video encoding remains NVENC-only. HDR10+ uses the static base; Dolby Vision
+conversion is explicitly rejected. Decision tests preserve supported HDR
+direct/remux paths and cover modern and legacy conversion requests.
+
+Disposable PostgreSQL integration checks persistence and queued decisions, plus
+worker FFmpeg arguments and toneMapped stream reports for HDR alone, ASS and
+bitmap burn-in. Subtitle composition follows tone mapping. These worker tests
+capture encoder arguments; they do not execute NVENC or validate real PGS
+rendering. Frontend tests cover the conversion indicator in English/Vietnamese
+and its absence for copied HDR.
+
+Validation on 2026-10-05: disposable PostgreSQL integration passed. Real filter
+tests use Debian bookworm FFmpeg with libzimg (the production image's distro);
+the local Homebrew FFmpeg lacks zscale. Actual NVIDIA encoding, HDR display
+playback and subjective tone-map appearance still require a real-device check.

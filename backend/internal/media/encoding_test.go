@@ -15,7 +15,7 @@ func TestEncodingModes(t *testing.T) {
 			t.Fatal("disabled mode generated encoding arguments")
 		}
 	}
-	for _, data := range []string{`{"mode":"cpu"}`, `{"mode":"auto"}`, `{"cq":52}`, `{"device":-1}`, `{"maxConcurrent":0}`, `{"videoCodec":"av1"}`, `{"audioBitrate":1}`, `{"subtitleSize":1}`, `{"subtitleColor":"blue"}`} {
+	for _, data := range []string{`{"mode":"cpu"}`, `{"mode":"auto"}`, `{"cq":52}`, `{"device":-1}`, `{"maxConcurrent":0}`, `{"videoCodec":"av1"}`, `{"audioBitrate":1}`, `{"subtitleSize":1}`, `{"subtitleOutline":0.25}`, `{"subtitleColor":"blue"}`} {
 		if _, err := ParseEncoding([]byte(data)); err == nil {
 			t.Fatalf("accepted invalid configuration %s", data)
 		}
@@ -34,7 +34,8 @@ func TestEncodingModes(t *testing.T) {
 	}
 	cfg.SubtitleColor, cfg.SubtitleBorderColor, cfg.SubtitleBackground = "#112233", "#445566", "#778899"
 	cfg.SubtitleBackgroundOpacity = 50
-	if style := cfg.SubtitleStyle(); style != "FontName=Arial,FontSize=24,PrimaryColour=&H00332211,OutlineColour=&H00665544,BackColour=&H80998877,Outline=2,MarginV=32,BorderStyle=3" {
+	cfg.SubtitleOutline = 0.5
+	if style := cfg.SubtitleStyle(); style != "FontName=Arial,FontSize=24,PrimaryColour=&H00332211,OutlineColour=&H00665544,BackColour=&H80998877,Outline=0.5,MarginV=32,BorderStyle=3" {
 		t.Fatalf("subtitle style: %s", style)
 	}
 }

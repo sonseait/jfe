@@ -26,10 +26,23 @@ func (s *Server) playbackDTO(ctx context.Context, p store.PlaybackSession) (Play
 		return PlaybackDTO{}, err
 	}
 	file := "index.m3u8"
+	var decision PlaybackDecisionDTO
+	_ = json.Unmarshal(p.Decision, &decision)
+	protocol := "hls"
+	if p.Method == "remux" && decision.Container == "mp4" {
+		file = "stream.mp4"
+		protocol = "mp4"
+	}
+	if p.Method == "direct" {
+		protocol = "file"
+	}
 	if p.Method == "direct" {
 		file = "original"
 	}
-	dto := PlaybackDTO{ID: p.ID, Method: p.Method, State: p.State, URL: "/api/v1/playback/" + p.ID + "/stream/" + file, Position: p.StartPosition, Duration: f.Duration}
+	dto := PlaybackDTO{Protocol: protocol, ID: p.ID, Method: p.Method, State: p.State, URL: "/api/v1/playback/" + p.ID + "/stream/" + file, Position: p.StartPosition, Duration: f.Duration}
+	if decision.Mode != "" {
+		dto.Decision = &decision
+	}
 	if p.State == "ready" {
 		var info media.StreamInfo
 		if p.Method == "direct" {
@@ -51,7 +64,7 @@ func (s *Server) playbackDTO(ctx context.Context, p store.PlaybackSession) (Play
 				return dto, err
 			}
 		}
-		dto.Stream = &PlaybackStreamDTO{VideoTranscoded: info.VideoTranscoded, VideoCodec: info.VideoCodec, AudioCodec: info.AudioCodec, VideoBitrate: info.VideoBitrate, AudioBitrate: info.AudioBitrate, TotalBitrate: info.TotalBitrate, BitrateSource: info.BitrateSource}
+		dto.Stream = &PlaybackStreamDTO{ToneMapped: info.ToneMapped, VideoTranscoded: info.VideoTranscoded, VideoCodec: info.VideoCodec, AudioCodec: info.AudioCodec, VideoBitrate: info.VideoBitrate, AudioBitrate: info.AudioBitrate, TotalBitrate: info.TotalBitrate, BitrateSource: info.BitrateSource}
 	}
 	return dto, nil
 }
@@ -81,11 +94,27 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
-	// Resolution profiles are server policy; clients only select the ceiling.
+	// Manual profiles use server policy. Automatic mode may lower the bitrate
+	// further to fit measured network throughput, within the same server ceiling.
 	if b.MaxHeight > 0 {
-		b.MaxBitrate = cfg.VideoBitrate(b.MaxHeight, 0)
+		limit := 0
+		if b.AutoQuality {
+			limit = b.MaxBitrate
+		}
+		b.MaxBitrate = cfg.VideoBitrate(b.MaxHeight, limit)
 	}
-	method, e := playbackMethod(probe, b, f.Size, f.Duration)
+	decision, e := playbackDecision(probe, b, f.Size, f.Duration)
+	if e != nil {
+		return PlaybackDTO{}, e
+	}
+	method := string(decision.Mode)
+	if decision.Mode == PlaybackModeDirectPlay {
+		method = "direct"
+	}
+	// Preserve the separate legacy audio conversion method.
+	if b.Capabilities == nil {
+		method, e = playbackMethod(probe, b, f.Size, f.Duration)
+	}
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
@@ -98,6 +127,9 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 			return PlaybackDTO{}, route.Fail(409, "Video transcoding is disabled")
 		}
 	}
+	if decision.SubtitleID != "" {
+		b.SubtitleIndex = -1
+	}
 	if b.Position > f.Duration {
 		b.Position = 0
 	}
@@ -108,12 +140,16 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	}
 	defer tx.Rollback(ctx)
 	q := s.DB.WithTx(tx)
-	e = q.StartPlayback(ctx, store.StartPlaybackParams{ID: id, UserID: route.User(ctx).ID, ItemID: f.ItemID, FileID: f.ID, TokenHash: hash(t), Method: method, State: state, StartPosition: b.Position, ExpiresAt: time.Now().Add(6 * time.Hour)})
+	decisionJSON, _ := json.Marshal(decision)
+	e = q.StartPlayback(ctx, store.StartPlaybackParams{Decision: decisionJSON, ID: id, UserID: route.User(ctx).ID, ItemID: f.ItemID, FileID: f.ID, TokenHash: hash(t), Method: method, State: state, StartPosition: b.Position, ExpiresAt: time.Now().Add(6 * time.Hour)})
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
 	if method != "direct" {
-		payload, _ := json.Marshal(b)
+		payload, _ := json.Marshal(struct {
+			PlaybackRequest
+			Decision PlaybackDecisionDTO `json:"decision"`
+		}{b, decision})
 		_, e = q.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "transcoder", Kind: "playback", ResourceID: id, Payload: payload})
 		if e != nil {
 			return PlaybackDTO{}, e
@@ -228,6 +264,11 @@ func (s *Server) playbackRoutes() {
 				return out(StreamDTO{}, route.Fail(404, "Media unavailable"))
 			}
 		} else {
+			var decision PlaybackDecisionDTO
+			_ = json.Unmarshal(p.Decision, &decision)
+			if p.Method == "remux" && decision.Container == "mp4" && in.Params.File != "stream.mp4" {
+				return out(StreamDTO{}, route.Fail(404, "Not found"))
+			}
 			root := filepath.Join(s.Config.CacheRoot, "playback", p.ID)
 			path, e = media.Within(root, filepath.Join(root, in.Params.File))
 			if e != nil {
@@ -236,6 +277,13 @@ func (s *Server) playbackRoutes() {
 		}
 		return route.Output[StreamDTO]{Send: func(c fiber.Ctx) error {
 			c.Set("Cache-Control", "private, no-store")
+			if strings.HasSuffix(path, "stream.mp4") {
+				c.Set("Content-Type", "video/mp4")
+				if _, err := os.Stat(filepath.Join(filepath.Dir(path), "complete")); err == nil {
+					c.Set("X-Playback-Complete", "true")
+				}
+				return sendRemuxRange(c, path)
+			}
 			if strings.HasSuffix(path, ".m3u8") {
 				data, e := os.ReadFile(path)
 				if e != nil {

@@ -538,6 +538,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/items/{id}/metadata/refresh': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** refreshItemMetadata */
+    post: operations['refreshItemMetadata'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/items/{id}/state': {
     parameters: {
       query?: never;
@@ -907,6 +924,7 @@ export interface components {
     };
     FileDTO: {
       available: boolean;
+      container?: string;
       duration: number;
       height: number;
       id: string;
@@ -976,6 +994,7 @@ export interface components {
       items: components['schemas']['ImportSourceDTO'][];
     };
     ItemDTO: {
+      duration: number;
       episode: number;
       favorite: boolean;
       id: string;
@@ -1062,6 +1081,10 @@ export interface components {
       search: string;
       year: number;
     };
+    MetadataRefreshRequest: {
+      /** @enum {string} */
+      mode: 'replace' | 'missing';
+    };
     MetadataRequest: {
       locked: boolean;
       overview: string;
@@ -1092,18 +1115,41 @@ export interface components {
       currentPassword: string;
       newPassword: string;
     };
+    PlaybackCapabilitiesDTO: {
+      audio: string[];
+      containers: string[];
+      remux: boolean;
+      remuxAudio?: string[];
+      video: components['schemas']['VideoCapabilityDTO'][];
+    };
     PlaybackDTO: {
+      decision?: components['schemas']['PlaybackDecisionDTO'];
       duration: number;
       id: string;
       method: string;
       position: number;
+      protocol?: string;
       state: string;
       stream?: components['schemas']['PlaybackStreamDTO'];
       streamToken?: string;
       url: string;
     };
+    PlaybackDecisionDTO: {
+      audioAction: string;
+      container: string;
+      /** @enum {string} */
+      mode: 'direct_play' | 'remux' | 'transcode';
+      reason: string;
+      subtitleAction: string;
+      subtitleId?: string;
+      toneMapped?: boolean;
+      videoAction: string;
+      videoCodec?: string;
+    };
     PlaybackRequest: {
       audioIndex: number;
+      autoQuality?: boolean;
+      capabilities?: components['schemas']['PlaybackCapabilitiesDTO'];
       directPlay: boolean;
       /** Format: uuid */
       fileId: string;
@@ -1119,6 +1165,7 @@ export interface components {
       audioBitrate: number;
       audioCodec: string;
       bitrateSource: string;
+      toneMapped?: boolean;
       totalBitrate: number;
       videoBitrate: number;
       videoCodec: string;
@@ -1195,11 +1242,26 @@ export interface components {
       token: string;
     };
     TrackDTO: {
+      bitDepth?: number;
+      bitrate?: number;
+      channels?: number;
       codec: string;
+      codecTag?: string;
+      externalSubtitle?: boolean;
+      frameRate?: number;
+      hdrFormat?: string;
+      height?: number;
       index: number;
       language: string;
+      level?: number;
+      pixelFormat?: string;
+      profile?: string;
+      sampleRate?: number;
+      subtitleId?: string;
+      subtitleType?: string;
       title: string;
       type: string;
+      width?: number;
     };
     UserDTO: {
       disabled: boolean;
@@ -1220,6 +1282,15 @@ export interface components {
     };
     UsersDTO: {
       items: components['schemas']['UserDTO'][];
+    };
+    VideoCapabilityDTO: {
+      bitDepth: number;
+      codec: string;
+      hdrFormat: string;
+      level: number;
+      maxHeight: number;
+      maxWidth: number;
+      profile: string;
     };
     WorkerDTO: {
       /** Format: date-time */
@@ -5468,6 +5539,122 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ItemDTO'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Requested Range Not Satisfiable */
+      416: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+    };
+  };
+  refreshItemMetadata: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MetadataRefreshRequest'];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['JobDTO'];
         };
       };
       /** @description Bad Request */

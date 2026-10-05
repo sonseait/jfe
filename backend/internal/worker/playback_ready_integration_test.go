@@ -20,6 +20,10 @@ import (
 )
 
 func TestPlaybackReadyBeforeBitrateMeasurement(t *testing.T) {
+	t.Run("legacy HLS", func(t *testing.T) { testPlaybackReadyBeforeBitrateMeasurement(t, false) })
+	t.Run("fragmented MP4", func(t *testing.T) { testPlaybackReadyBeforeBitrateMeasurement(t, true) })
+}
+func testPlaybackReadyBeforeBitrateMeasurement(t *testing.T, mp4 bool) {
 	base := os.Getenv("JFE_TEST_SCHEMA_URL")
 	if base == "" {
 		t.Skip("requires isolated integration schema")
@@ -60,6 +64,11 @@ func TestPlaybackReadyBeforeBitrateMeasurement(t *testing.T) {
 		"ffmpeg":  "#!/bin/sh\nprintf '#EXTM3U\\n#EXTINF:1,\\nsegment-000000.ts\\n#EXTINF:1,\\nsegment-000001.ts\\n' > index.m3u8\nprintf sample > segment-000000.ts\nprintf sample > segment-000001.ts\n",
 		"ffprobe": "#!/bin/sh\nwhile [ ! -e \"$JFE_TEST_PROBE_RELEASE\" ]; do /bin/sleep 0.05; done\nprintf '{\"streams\":[],\"packets\":[],\"format\":{\"bit_rate\":\"123456\"}}'\n",
 	}
+	payload := []byte(`{"AudioIndex":-1,"SubtitleIndex":-1}`)
+	if mp4 {
+		payload = []byte(`{"AudioIndex":-1,"SubtitleIndex":-1,"decision":{"container":"mp4","audioAction":"copy"}}`)
+		scripts["ffmpeg"] = "#!/bin/sh\nprintf '\\000\\000\\000\\010moof\\000\\000\\000\\014mdatdata' > stream.mp4\nwhile [ ! -e \"$JFE_TEST_PROBE_RELEASE\" ]; do /bin/sleep 0.05; done\n"
+	}
 	for name, script := range scripts {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)
@@ -69,7 +78,7 @@ func TestPlaybackReadyBeforeBitrateMeasurement(t *testing.T) {
 	w := Worker{DB: db, Pool: pool, Config: cfg}
 	done := make(chan error, 1)
 	go func() {
-		done <- w.transcode(ctx, store.Job{ResourceID: id, Payload: []byte(`{"AudioIndex":-1,"SubtitleIndex":-1}`)})
+		done <- w.transcode(ctx, store.Job{ResourceID: id, Payload: payload})
 		close(done)
 	}()
 	defer func() {
@@ -132,7 +141,7 @@ func TestPlaybackReadyBeforeBitrateMeasurement(t *testing.T) {
 	}
 	stopped := make(chan error, 1)
 	go func() {
-		stopped <- w.transcode(ctx, store.Job{ResourceID: id, Payload: []byte(`{"AudioIndex":-1,"SubtitleIndex":-1}`)})
+		stopped <- w.transcode(ctx, store.Job{ResourceID: id, Payload: payload})
 		close(stopped)
 	}()
 	defer func() { cancel(); <-stopped }()
@@ -157,6 +166,9 @@ func TestPlaybackReadyBeforeBitrateMeasurement(t *testing.T) {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
 		t.Fatal("stopped session waited for bitrate probe")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.CacheRoot, "playback", id)); !os.IsNotExist(err) {
+		t.Fatalf("stopped session output was not removed: %v", err)
 	}
 	var logs bytes.Buffer
 	previousLogger := log.Logger

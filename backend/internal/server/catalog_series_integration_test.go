@@ -24,17 +24,21 @@ func TestLibraryCatalogShowsSeriesRoots(t *testing.T) {
 	defer pool.Close()
 	s := New(config.Config{}, pool)
 	library, showA, showB := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	episodeA, episodeB := uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO libraries(id,name,kind,paths) VALUES($1,'Shows','series','{}')`, library); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM libraries WHERE id=$1`, library) }()
-	for _, item := range []struct{ id, parent, kind, title string }{
-		{showA, "", "series", "Alpha"}, {showB, "", "series", "Beta"},
-		{uuid.NewString(), showA, "episode", "A first episode"},
-		{uuid.NewString(), showA, "episode", "B second episode"},
-		{uuid.NewString(), showB, "episode", "C episode"},
+	for _, item := range []struct {
+		id, parent, kind, title string
+		season, episode         int32
+	}{
+		{showA, "", "series", "Alpha", 0, 0}, {showB, "", "series", "Beta", 0, 0},
+		{episodeA, showA, "episode", "A first episode", 2, 1},
+		{episodeB, showA, "episode", "B second episode", 1, 2},
+		{uuid.NewString(), showB, "episode", "C episode", 0, 0},
 	} {
-		err := s.DB.UpsertItem(ctx, store.UpsertItemParams{ID: item.id, LibraryID: library, ParentID: item.parent, Kind: item.kind, Title: item.title, SortTitle: item.title})
+		err := s.DB.UpsertItem(ctx, store.UpsertItemParams{ID: item.id, LibraryID: library, ParentID: item.parent, Kind: item.kind, Title: item.title, SortTitle: item.title, Season: item.season, Episode: item.episode})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,8 +51,8 @@ func TestLibraryCatalogShowsSeriesRoots(t *testing.T) {
 	if err != nil || len(second.Items) != 1 || second.Items[0].ID != showB || second.HasMore {
 		t.Fatalf("second root page: %+v %v", second, err)
 	}
-	episodes, err := s.catalog(ctx, CatalogQuery{LibraryID: library, ParentID: showA})
-	if err != nil || len(episodes.Items) != 2 {
+	episodes, err := s.catalog(ctx, CatalogQuery{LibraryID: library, ParentID: showA, Limit: 1})
+	if err != nil || len(episodes.Items) != 2 || episodes.HasMore || episodes.Items[0].ID != episodeB || episodes.Items[1].ID != episodeA {
 		t.Fatalf("show episodes: %+v %v", episodes, err)
 	}
 	for _, item := range episodes.Items {

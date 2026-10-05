@@ -25,22 +25,45 @@ remains the accepted scope; this document tracks implementation.
    files through lease-fenced updates; progress stays below 100 until completion.
    Library counts include available indexed media files, not series parent items.
    Library views poll every three seconds and display the most recent scan.
-4. transcoder claims playback jobs, runs FFmpeg outside HTTP requests and writes
-   HLS to the shared cache. api serves the resulting files and original direct
-   streams. HLS uses EVENT playlists and starts at the beginning of each session.
-   The player checks the original container/video/audio codec combination with
-   canPlayType, prefers direct playback when supported, and otherwise requests HLS.
-   Compatible H.264 uses video copy; non-AAC audio alone is converted to AAC.
-   Decode failures retry direct-to-remux, then NVENC if enabled; network failures
-   do not trigger video conversion. The optional forceTranscode request flag is
-   reserved for the decode fallback. Resolution presets cap output at 1280x720,
-   1920x1080 or 3840x2160, preserve aspect ratio and never upscale. Limits are
-   compared with source dimensions and average total bitrate (file size/duration);
-   selecting a preset above the source no longer forces video encoding. Unknown
-   dimensions/bitrate are treated conservatively when a limit is requested.
-   Unsupported video, subtitle burn-in, lower quality limits or explicit decode
-   fallback still require NVENC. Codec support probes are advisory; unusual
-   profiles/levels can still fail and use the bounded fallback.
+4. Playback uses a source-aware decision layer: direct play, then video-copy
+   remux/direct stream, then NVIDIA video encoding. Scanner persists video
+   profile, level, pixel format/bit depth, dimensions, bitrate, frame rate and HDR
+   transfer, primaries, matrix, range and side data, plus audio channels/sample rate/bitrate and subtitle type.
+   Probe version 3 invalidates old cached probes on the next library scan.
+   The browser reports tested source configurations through PlaybackRequest's
+   optional capabilities object. Codec strings distinguish HEVC Main/Main10;
+   canPlayType, MediaSource.isTypeSupported and MediaCapabilities.decodingInfo
+   check native and MSE playback without user-agent rules. Native and MSE audio
+   capabilities are separate. HDR requires an explicit decoding capability;
+   Dolby Vision/HDR10+ playback is conservatively unavailable in this detector.
+   Unknown profiles are not advertised. Requests without capabilities retain
+   the legacy method selection and HLS remux transport.
+   PlaybackDTO keeps method/URL compatibility and adds decision (mode, actions,
+   container, reason) and protocol. Decisions are persisted with the session.
+   Direct play serves the original with HTTP ranges and queues no worker job.
+   New video remux sessions use FFmpeg video copy into growing fragmented MP4,
+   with supported audio copied and unsupported audio converted to stereo AAC.
+   HEVC is tagged hvc1 for MP4 browser compatibility. The API streams fresh size
+   snapshots with bounded ranges, avoiding cached growing-file sizes. The MSE
+   reader requests 256 KiB chunks, limits buffered media to approximately 30
+   seconds ahead, removes media older than 60 seconds and releases its object URL
+   on stop. Readiness requires a complete moof/mdat fragment; EOF requires a worker
+   completion marker. A copied source GOP can delay the first fragment.
+   The transcoder owns all playback FFmpeg processes; none run in HTTP requests.
+   Unsupported video, requested lower resolution/bitrate, subtitle burn-in or
+   explicit decode fallback require NVENC. Capability-aware conversion outputs
+   H.264/AAC HLS even when the legacy output setting is HEVC. Video encoding has
+   no CPU fallback. Required HDR10/PQ and HLG transcodes use CPU zscale/tonemap
+   filters followed by NVENC, converting to limited-range 8-bit BT.709 SDR.
+   HDR10+ uses its static HDR10 base; dynamic metadata is not applied. Dolby
+   Vision conversion is rejected because it requires RPU-aware processing.
+   Direct/remux HDR remains untouched when supported by the client. The worker
+   independently checks source HDR metadata and required filters, including
+   libzimg-backed zscale, before encoding. Tone mapping precedes subtitle
+   composition; SDR output strips mastering/content-light/HDR10+ frame metadata
+   and sets explicit BT.709 color tags. Decisions and stream reports include
+   toneMapped, shown in the player. Rescan libraries to refresh cached colors.
+   Quality limits are ceilings and do not encode smaller/lower-bitrate sources.
    Progress sequence numbers prevent stale updates from winning.
 5. Downloader owns public YouTube previews, downloads and six-hour append-only
    playlist subscriptions. Scanner also owns audio discovery and journaled tag
@@ -64,7 +87,7 @@ remains the accepted scope; this document tracks implementation.
 - Setup/login/logout, user administration and library permissions.
 - Library paths, manual/scheduled scan, jobs/workers, movie/episode catalog,
   local NFO/posters, optional TMDB lookup and metadata editor.
-- Direct MP4, remux/NVIDIA NVENC HLS, track selection, watch state, resume, next episode,
+- Direct MP4/WebM, fMP4 remux and NVIDIA NVENC HLS, track selection, watch state, resume, next episode,
   persistent player and fullscreen.
 - Seek reuses the active session for buffered media or published HLS fragments,
   including unbuffered segments still available in the EVENT playlist. Native HLS
@@ -278,3 +301,81 @@ numbers. Unknown season-folder names still group under the show, using available
 filename numbering. Flat filename grouping remains for existing flat libraries.
 Rescans preserve file/item IDs and watch state while correcting parent/season
 links and removing empty legacy series records.
+
+Show metadata refresh accepts a required `mode` (`replace` or `missing`) at
+`POST /items/:id/metadata/refresh`. Missing mode requires an identified series,
+skips the series lookup/update even if the series is locked, and queues only
+unlocked episodes without a provider ID. Episode jobs retain the mode and recheck
+provider IDs when executed so retries do not refresh already populated episodes.
+Replace mode keeps the existing series/episode refresh and lock behavior.
+
+The admin show-detail action opens a dedicated refresh dialog with the two modes.
+The manual metadata editor contains no refresh controls; its Save action only
+saves manual fields. The refresh dialog submits the selected mode directly, with
+an overwrite warning and explicit replacement action for replace mode.
+
+The resume catalog orders unfinished user-state records by updated time descending,
+with title/ID ties and a timestamp-bearing pagination cursor. Library permissions
+and user isolation apply before pagination; resume requests scoped to a library
+include episode children. Item DTOs expose duration from the first available file
+in path order, matching the Home resume action's file selection. Unknown duration
+is zero. Home renders clamped progress and invalidates its resume query after a
+successful video progress save.
+
+Playback preferences use the interface language until the viewer chooses a
+subtitle manually, including Off. Language matching normalizes accents/case and
+token boundaries for English/Vietnamese codes and labels. Matching uploaded text
+overlays take priority over matching embedded/sidecar tracks; burn-in is gated
+by the transcoding capability. Playback waits for the initial capability and
+subtitle queries so it does not first launch an unwanted session.
+
+Automatic video quality starts with the browser's downlink hint when available.
+Native direct playback measures two bounded 256 KiB ranges through its existing
+short-lived authorized stream URL, with a three-second timeout per sample and
+cancellation on session cleanup. Responses ignoring Range are cancelled. HLS
+uses completed, non-aborted media transfer samples; cached/unknown speeds stay
+unknown. Fetch probe timings are excluded from native media observer samples.
+The selector keeps 35% network headroom, reserves audio bandwidth, accounts for
+playback speed and avoids increasing source dimensions. Two lower or four higher
+samples and a 30-second switching cooldown prevent repeated restarts.
+Changes retain position, cancel prior requests and clean up the prior session.
+
+PlaybackRequest.autoQuality allows a lower measured MaxBitrate under the selected
+server resolution profile's bitrate ceiling. Manual profiles retain server
+bitrates. Original source playback remains preferred when it fits the connection;
+automatic burn-in also caps bitrate using the source estimate. The worker still
+owns all FFmpeg processes and video encoding remains NVIDIA-only. With encoding
+disabled, quality stays at Original and its selector is disabled.
+
+## Playback transport and lifecycle details
+
+POST /api/v1/playback remains the negotiation/start operation. Direct sessions
+return protocol=file and /stream/original; remux sessions return protocol=mp4 and
+/stream/stream.mp4; video transcode sessions return protocol=hls and
+/stream/index.m3u8. The explicit decision modes are direct_play, remux and
+transcode; the legacy method name direct remains unchanged. All streams enforce
+session credentials, enabled accounts and current library access.
+
+Playback start creates at most one worker job for the session. Existing leased
+job claims and cancellation own the process lifetime. Stop cancels the job and
+CommandContext process; browser cleanup aborts reads and deletes the session.
+Individual range-request completion does not kill a shared worker process.
+Abruptly disconnected clients expire after the existing five-minute progress
+idle timeout; credentials also expire after six hours. Worker cleanup removes
+stopped/failed/expired playback files. Remux writes output to disk without loading
+the source into memory; cache disk usage can grow to the size of a session output.
+
+Direct seeking uses HTTP ranges. Remux seeking inside MSE buffered/seekable ranges
+uses currentTime; seeking outside available ranges creates a new session with
+FFmpeg input -ss at the requested movie timestamp. Stream-copy seeks retain source
+keyframe granularity. Transcode seeks retain the existing HLS session behavior.
+
+Scanner prepares SRT/WebVTT embedded/sidecar tracks as bounded plain-text cue
+files in shared cache/subtitles, atomically published and listed through the
+existing subtitle API. The existing frontend overlay uses them with all playback
+modes and encoding disabled. The API checks file/library access before reading
+prepared cues. Subtitle extraction failure leaves explicit burn-in available when
+NVENC is enabled. ASS styling and bitmap subtitles retain explicit burn-in;
+uploaded SRT/WebVTT still use the existing per-account database storage. Text
+subtitles over 512 KiB are not prepared. Overlay captions have the same existing
+native-video fullscreen/PiP limitation as uploaded text captions.

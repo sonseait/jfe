@@ -107,6 +107,9 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 		return applyToneMappingDecision(probe, d)
 	}
 	audioSupported := audio == nil || slices.Contains(c.Audio, audio.Codec)
+	if b.Target == "chromecast" && audio != nil && audio.Channels > 2 {
+		audioSupported = false
+	}
 	container := ""
 	if strings.Contains(probe.Format.Name, "mp4") {
 		container = "mp4"
@@ -123,6 +126,10 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 		return d, route.Fail(409, "Client cannot play fragmented MP4 remux")
 	}
 	d.Mode = PlaybackModeRemux
+	if b.Target == "chromecast" {
+		// Cast's default receiver consumes HLS, not our growing MP4 range stream.
+		d.Container = "hls"
+	}
 	d.Reason = "Video is supported; container or track selection requires remux"
 	// Native file and MSE audio support can differ (for example AC3).
 	remuxAudio := c.RemuxAudio
@@ -130,6 +137,9 @@ func playbackDecision(probe media.Probe, b PlaybackRequest, size int64, duration
 		remuxAudio = c.Audio
 	}
 	audioSupported = audio == nil || slices.Contains(remuxAudio, audio.Codec)
+	if b.Target == "chromecast" && audio != nil && audio.Channels > 2 {
+		audioSupported = false
+	}
 	// Only copy codecs supported by the client and MP4 muxer.
 	if audio != nil && (!audioSupported || !slices.Contains([]string{"aac", "mp3", "ac3", "eac3", "opus", "flac"}, audio.Codec)) {
 		if !slices.Contains(remuxAudio, "aac") {

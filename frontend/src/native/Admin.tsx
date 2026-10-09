@@ -1,3 +1,4 @@
+import { SUBTITLE_FONTS } from './playback-preferences';
 import { useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -993,7 +994,7 @@ function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
             label={t('subtitleRender.font')}
             allowDeselect={false}
             value={value.subtitleFont}
-            data={['Arial', 'Noto Sans', 'Noto Sans CJK']}
+            data={[...SUBTITLE_FONTS]}
             onChange={(subtitleFont) =>
               setValue((old) => ({
                 ...old,

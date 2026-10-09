@@ -35,7 +35,7 @@ function titleStem(title: string) {
 }
 
 // Group only for display; every item keeps its identity and playback state.
-export function groupTitles(items: DTO<'ItemDTO'>[]): TitleGroup[] {
+export function groupTitles(items: DTO<'ItemDTO'>[], alphabetical = true): TitleGroup[] {
   const entries = items.map((item) => ({ item, ...titleStem(item.title) }));
   const roots = new Set(
     entries
@@ -54,9 +54,10 @@ export function groupTitles(items: DTO<'ItemDTO'>[]): TitleGroup[] {
     } else groups.set(key, { key, title: stem || item.title, items: [item] });
   }
   for (const group of groups.values()) {
-    group.items.sort(
-      (a, b) => collator.compare(a.title, b.title) || a.year - b.year || a.id.localeCompare(b.id),
-    );
+    if (alphabetical)
+      group.items.sort(
+        (a, b) => collator.compare(a.title, b.title) || a.year - b.year || a.id.localeCompare(b.id),
+      );
     if (group.items.length > 1) {
       // Use the common display prefix instead of naming the group after one sequel.
       const labels = group.items.map((i) => titleStem(i.title).stem.split(/\s+/));
@@ -74,9 +75,10 @@ export function groupTitles(items: DTO<'ItemDTO'>[]): TitleGroup[] {
       if (prefix.length) group.title = prefix.join(' ');
     }
   }
-  return [...groups.values()].sort(
-    (a, b) => collator.compare(a.title, b.title) || a.key.localeCompare(b.key),
-  );
+  const result = [...groups.values()];
+  return alphabetical
+    ? result.sort((a, b) => collator.compare(a.title, b.title) || a.key.localeCompare(b.key))
+    : result;
 }
 
 // A series can have multiple seasons, but episodes remain independently playable cards.

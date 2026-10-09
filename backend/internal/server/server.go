@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -43,6 +44,21 @@ func New(cfg config.Config, pool *pgxpool.Pool) *Server {
 		return err
 	})
 	app.Use(recover.New())
+	// Receivers fetch bearer-scoped media URLs cross-origin. Keep CORS scoped
+	// to streams; account APIs still require same-origin authenticated requests.
+	app.Use(func(c fiber.Ctx) error {
+		path := c.Path()
+		if strings.HasPrefix(path, "/api/v1/playback/") && strings.Contains(path, "/stream/") {
+			c.Set("Access-Control-Allow-Origin", "*")
+			c.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			c.Set("Access-Control-Allow-Headers", "Range")
+			c.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+			if c.Method() == "OPTIONS" {
+				return c.SendStatus(fiber.StatusNoContent)
+			}
+		}
+		return c.Next()
+	})
 	app.Use("/api/v1/auth", limiter.New(limiter.Config{Max: 20, Expiration: time.Minute}))
 	s := &Server{cfg, pool, nil, app, route.New(app)}
 	if pool != nil {

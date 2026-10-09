@@ -109,7 +109,10 @@ func (s *Server) itemDTO(ctx context.Context, i store.Item) ItemDTO {
 	return ItemDTO{i.ID, i.LibraryID, i.ParentID, i.Kind, i.Title, int(i.Year), int(i.Season), int(i.Episode), i.Overview, poster, i.ProviderID, i.MetadataLocked, st.Favorite, st.Watched, st.Position, duration}
 }
 
-type cursor struct{ Title, ID, Fingerprint, UpdatedAt string }
+type cursor struct {
+	Title, ID, Fingerprint, UpdatedAt string
+	Watching                          int32
+}
 
 func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) {
 	v := ItemsDTO{Items: []ItemDTO{}}
@@ -121,10 +124,10 @@ func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) 
 	cur := cursor{}
 	if rawCursor != "" {
 		data, e := base64.RawURLEncoding.DecodeString(rawCursor)
-		if e != nil || json.Unmarshal(data, &cur) != nil || cur.Fingerprint != fingerprint {
+		if e != nil || json.Unmarshal(data, &cur) != nil || cur.Fingerprint != fingerprint || cur.ID == "" || cur.Watching < 0 || cur.Watching > 1 {
 			return v, route.Fail(422, "Invalid cursor")
 		}
-		if q.Resume {
+		if q.Resume || q.Sort == "watching" || q.Sort == "newest" || cur.UpdatedAt != "" {
 			if _, err := time.Parse(time.RFC3339Nano, cur.UpdatedAt); err != nil {
 				return v, route.Fail(422, "Invalid cursor")
 			}
@@ -146,7 +149,7 @@ func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) 
 		}
 		return v, nil
 	}
-	rows, e := s.DB.ListItems(ctx, store.ListItemsParams{Artist: q.Artist, TopLevel: q.TopLevel, IsAdmin: p.Role == "admin", UserID: p.ID, LibraryID: q.LibraryID, ParentID: q.ParentID, Kind: q.Kind, PersonID: q.PersonID, Search: q.Search, Favorites: q.Favorites, Resume: q.Resume, AfterUpdatedAt: cur.UpdatedAt, AfterTitle: cur.Title, AfterID: cur.ID, PageLimit: int32(limit + 1)})
+	rows, e := s.DB.ListItems(ctx, store.ListItemsParams{Sort: q.Sort, AfterWatching: cur.Watching, Artist: q.Artist, TopLevel: q.TopLevel, IsAdmin: p.Role == "admin", UserID: p.ID, LibraryID: q.LibraryID, ParentID: q.ParentID, Kind: q.Kind, PersonID: q.PersonID, Search: q.Search, Favorites: q.Favorites, Resume: q.Resume, AfterUpdatedAt: cur.UpdatedAt, AfterTitle: cur.Title, AfterID: cur.ID, PageLimit: int32(limit + 1)})
 	if e != nil {
 		return v, e
 	}
@@ -166,6 +169,20 @@ func (s *Server) catalog(ctx context.Context, q CatalogQuery) (ItemsDTO, error) 
 				return v, err
 			}
 			next.UpdatedAt = state.UpdatedAt.Format(time.RFC3339Nano)
+		}
+		if !q.Resume && q.Sort == "newest" {
+			next.UpdatedAt = last.CreatedAt.Format(time.RFC3339Nano)
+		}
+		if !q.Resume && q.Sort == "watching" {
+			next.UpdatedAt = time.Unix(0, 0).UTC().Format(time.RFC3339Nano)
+			state, err := s.DB.GetState(ctx, store.GetStateParams{UserID: p.ID, ItemID: last.ID})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return v, err
+			}
+			if err == nil && state.Position > 0 && !state.Watched {
+				next.Watching = 1
+				next.UpdatedAt = state.UpdatedAt.Format(time.RFC3339Nano)
+			}
 		}
 		data, _ := json.Marshal(next)
 		v.NextCursor = base64.RawURLEncoding.EncodeToString(data)

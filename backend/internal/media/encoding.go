@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -45,7 +46,7 @@ func ParseEncoding(data []byte) (Encoding, error) {
 		cfg.Bitrate720 < 100000 || cfg.Bitrate720 > 100000000 || cfg.Bitrate1080 < 100000 || cfg.Bitrate1080 > 100000000 || cfg.Bitrate2160 < 100000 || cfg.Bitrate2160 > 100000000 ||
 		(cfg.AudioCodec != "aac" && cfg.AudioCodec != "ac3") || cfg.AudioBitrate < 64000 || cfg.AudioBitrate > 1024000 ||
 		cfg.SubtitleSize < 12 || cfg.SubtitleSize > 72 || cfg.SubtitleOutline < 0 || cfg.SubtitleOutline > 10 || cfg.SubtitleOutline != math.Round(cfg.SubtitleOutline*2)/2 || cfg.SubtitleMargin < 0 || cfg.SubtitleMargin > 200 || cfg.SubtitleBackgroundOpacity < 0 || cfg.SubtitleBackgroundOpacity > 100 ||
-		(cfg.SubtitleFont != "Arial" && cfg.SubtitleFont != "Noto Sans" && cfg.SubtitleFont != "Noto Sans CJK") || !validColor(cfg.SubtitleColor) || !validColor(cfg.SubtitleBackground) || !validColor(cfg.SubtitleBorderColor) {
+		!ValidSubtitleFont(cfg.SubtitleFont) || !validColor(cfg.SubtitleColor) || !validColor(cfg.SubtitleBackground) || !validColor(cfg.SubtitleBorderColor) {
 		return cfg, fmt.Errorf("invalid encoding settings")
 	}
 	return cfg, nil
@@ -114,4 +115,9 @@ func (cfg Encoding) CUDAInputArgs() ([]string, error) {
 		return nil, fmt.Errorf("video transcoding is disabled")
 	}
 	return []string{"-init_hw_device", "cuda=jfe:" + strconv.Itoa(cfg.Device), "-filter_hw_device", "jfe", "-hwaccel", "cuda", "-hwaccel_device", "jfe", "-hwaccel_output_format", "cuda"}, nil
+}
+
+// Allowlist prevents FFmpeg filter/style injection from per-film overrides.
+func ValidSubtitleFont(font string) bool {
+	return slices.Contains([]string{"Arial", "Noto Sans", "Noto Serif", "Noto Sans Mono", "Noto Sans CJK", "DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono", "Liberation Sans", "Liberation Serif", "Liberation Mono"}, font)
 }

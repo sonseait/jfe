@@ -13,7 +13,6 @@ import (
 	"jfe/backend/internal/media"
 	"jfe/backend/internal/settings"
 	"jfe/backend/internal/store"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -149,10 +148,16 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			if e = w.discoverSubtitleSidecars(real, &probe); e != nil {
 				return e
 			}
-			w.prepareTextSubtitles(ctx, stable("file", id, real), real, &probe, cached)
+			pendingSubtitles := w.prepareTextSubtitles(ctx, stable("file", id, real), real, &probe, cached, true)
 			b, _ := json.Marshal(probe)
 			if e = w.DB.SaveFile(ctx, store.SaveFileParams{ID: stable("file", id, real), ItemID: itemID, Path: real, Size: stat.Size(), ModifiedAt: stat.ModTime().UnixNano(), Duration: probe.Duration(), Probe: b}); e != nil {
 				return e
+			}
+
+			if pendingSubtitles {
+				if _, e = w.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "scanner", Kind: "subtitle_prepare", ResourceID: stable("file", id, real), Payload: []byte("{}")}); e != nil {
+					return e
+				}
 			}
 			if parentID != "" && !updatedShows[parentID] {
 				if showRoot == "" {
@@ -432,6 +437,23 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 			info.Name = english.Name
 		}
 	}
+	// Optional images share a deadline; prioritize the movie poster over portraits.
+	artworkCtx, cancelArtwork := context.WithTimeout(ctx, 45*time.Second)
+	defer cancelArtwork()
+	artwork := info.Poster
+	if i.Kind == "episode" && info.Still != "" {
+		artwork = info.Still
+	}
+	if artwork != "" {
+		if found, err := w.downloadTMDBArtwork(artworkCtx, i.ID, artwork, "w500"); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Msg("poster unavailable; keeping metadata")
+		} else if found {
+			i.Poster = i.ID + ".jpg"
+		}
+	}
 	cast := []media.CastMember{}
 	var oldCast []media.CastMember
 	_ = json.Unmarshal(i.CastMembers, &oldCast)
@@ -444,15 +466,21 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 					break
 				}
 			}
-			if general.CastImages {
-				if image, err := w.castPortrait(ctx, person.ID, actor.Profile); err != nil {
-					return err
-				} else {
+			if general.CastImages && artworkCtx.Err() == nil {
+				if image, err := w.castPortrait(artworkCtx, person.ID, actor.Profile); err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					log.Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Int("actorId", actor.ID).Msg("cast portrait unavailable; keeping metadata")
+				} else if image != "" {
 					person.Image = image
 				}
 			}
 			cast = append(cast, person)
 		}
+	}
+	if artworkCtx.Err() != nil && ctx.Err() == nil {
+		log.Warn().Str("jobId", j.ID).Str("itemId", i.ID).Msg("artwork deadline exceeded; keeping metadata and skipping remaining images")
 	}
 	i.CastMembers, _ = json.Marshal(cast)
 	if info.Title == "" {
@@ -466,30 +494,8 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		y, _ := strconv.Atoi(info.Date[:4])
 		i.Year = int32(y)
 	}
-	artwork := info.Poster
-	if i.Kind == "episode" && info.Still != "" {
-		artwork = info.Still
-	}
-	if artwork != "" && strings.HasPrefix(artwork, "/") && !strings.Contains(artwork, "..") {
-		req, e := http.NewRequestWithContext(ctx, "GET", "https://image.tmdb.org/t/p/w500"+artwork, nil)
-		if e != nil {
-			return e
-		}
-		client := http.Client{Timeout: 20 * time.Second}
-		res, e := client.Do(req)
-		if e != nil {
-			return e
-		}
-		if res.StatusCode == 200 {
-			e = w.saveArtwork(i.ID, res.Body)
-			if e == nil {
-				i.Poster = i.ID + ".jpg"
-			}
-		}
-		res.Body.Close()
-		if e != nil {
-			return e
-		}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if info.ID == 0 {
 		info.ID = metadataID

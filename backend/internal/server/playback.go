@@ -366,6 +366,9 @@ func (s *Server) playbackRoutes() {
 				c.Set("Content-Type", "application/vnd.apple.mpegurl")
 				return c.SendString(strings.Join(lines, "\n"))
 			}
+			if p.Method != "direct" && strings.HasSuffix(path, ".ts") {
+				c.Set("Content-Type", "video/mp2t")
+			}
 			return c.SendFile(path, fiber.SendFile{ByteRange: true})
 		}}, nil
 	})

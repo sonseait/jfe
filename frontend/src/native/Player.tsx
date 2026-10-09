@@ -18,12 +18,16 @@ import toast from 'react-hot-toast';
 import type Hls from 'hls.js';
 import type { LoaderStats } from 'hls.js';
 import {
-  measurePlaybackRate,
   preferredSubtitle,
   selectAutoQuality,
   networkDownlink,
-  createAutoQuality,
+  SUBTITLE_FONTS,
+  filmTrackSignature,
+  readFilmPreferences,
+  saveFilmPreferences,
+  type FilmPreferences,
 } from './playback-preferences';
+import { OpenSubtitles } from './OpenSubtitles';
 import { playbackCapabilities } from './playback-support';
 import { playRemux, RemuxDecodeError } from './remux-player';
 import { createAdaptiveBuffer, INITIAL_BUFFER_CONFIG } from './playback-buffer';
@@ -37,6 +41,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { SubtitleTiming, SubtitleUpload, UploadedSubtitleDelete } from './Subtitles';
 import { StreamIndicator } from './StreamIndicator';
+import { CastPlayer } from './CastPlayer';
 import { queryClient } from '../lib/query-client';
 import { api, result, useAuth, useResource, type DTO } from './api';
 function clockTime(seconds: number) {
@@ -126,7 +131,7 @@ export const useNativePlayer = create<PlaybackState>((set) => ({
   expanded: true,
   play: (detail, fileId) =>
     set((s) => ({ detail, fileId, generation: s.generation + 1, expanded: true })),
-  stop: () => set({ detail: undefined, fileId: undefined }),
+  stop: () => set((s) => ({ detail: undefined, fileId: undefined, generation: s.generation + 1 })),
   expand: () => set((s) => ({ expanded: !s.expanded })),
 }));
 export default function Player() {
@@ -148,6 +153,9 @@ function Surface() {
   const positionRef = useRef(position);
   const scrubbing = useRef(false);
   const [playing, setPlaying] = useState(false);
+  const [casting, setCasting] = useState(false);
+  const [castButtonTarget, setCastButtonTarget] = useState<HTMLDivElement | null>(null);
+  const wantsPlayback = useRef(true);
   const [error, setError] = useState(false);
   const [errorKey, setErrorKey] = useState('playbackError');
   const [fallback, setFallback] = useState(0);
@@ -155,8 +163,20 @@ function Surface() {
   const [downloadRate, setDownloadRate] = useState<number | null>(null);
   const [buffered, setBuffered] = useState<[number, number][]>([]);
   const [fullscreen, setFullscreen] = useState(false);
-  const [audio, setAudio] = useState('-1');
-  const [subtitleChoice, setSubtitle] = useState<string | null>(null);
+  const file = state.detail?.files.find((f) => f.id === state.fileId);
+  const userId = useAuth((s) => s.user?.id);
+  const trackSignature = filmTrackSignature(file);
+  const [saved] = useState(() => readFilmPreferences(userId, state.fileId, trackSignature));
+  const remember = (patch: FilmPreferences) =>
+    saveFilmPreferences(userId, state.fileId, trackSignature, patch);
+  const [audio, setAudio] = useState(() =>
+    saved.audio === '-1' ||
+    file?.tracks.some((track) => track.type === 'audio' && String(track.index) === saved.audio)
+      ? saved.audio!
+      : '-1',
+  );
+  const [subtitleChoice, setSubtitle] = useState<string | null>(saved.subtitle ?? null);
+  const [subtitleFont, setSubtitleFont] = useState(saved.font ?? '');
   const subtitles = useResource(
     ['subtitles', state.fileId],
     async (signal) =>
@@ -168,9 +188,14 @@ function Surface() {
       ),
     Boolean(state.fileId && auth),
   );
-  const file = state.detail?.files.find((f) => f.id === state.fileId);
+  const validSubtitleChoice =
+    subtitleChoice === '-1' ||
+    file?.tracks.some(
+      (track) => track.type === 'subtitle' && String(track.index) === subtitleChoice,
+    ) ||
+    subtitles.data?.items.some((sub) => 'upload:' + sub.id === subtitleChoice);
   const subtitle =
-    subtitleChoice ??
+    (validSubtitleChoice ? subtitleChoice : null) ??
     preferredSubtitle(file?.tracks ?? [], subtitles.data?.items ?? [], i18n.language, canTranscode);
   const uploadedId = subtitle.startsWith('upload:')
     ? subtitle.slice(7)
@@ -178,11 +203,11 @@ function Surface() {
         ?.subtitleId ?? '');
   const personalTiming = usePersonalSubtitleTiming(state.fileId, subtitle);
   const subtitleDelay = personalTiming.value;
-  const [quality, setQuality] = useState('auto');
-  const [autoQuality, setAutoQuality] = useState(() =>
+  const [quality, setQuality] = useState(saved.quality ?? 'auto');
+  // Pick Auto once per opened video; transfer metrics never restart playback.
+  const [autoQuality] = useState(() =>
     file ? selectAutoQuality(file, networkDownlink()) : { maxHeight: 0 as const, maxBitrate: 0 },
   );
-  const adaptiveQuality = useRef(createAutoQuality(autoQuality));
   const effectiveQuality = canTranscode
     ? quality === 'auto'
       ? String(autoQuality.maxHeight)
@@ -194,27 +219,21 @@ function Surface() {
     canTranscode && quality === 'auto'
       ? autoQuality.maxBitrate || (subtitle !== '-1' ? sourceBitrate : 0)
       : 0;
-  const sampleQuality = useRef<(rate: number | null, speed: number) => void>(() => {});
-  sampleQuality.current = (rate, speed) => {
-    if (!canTranscode || quality !== 'auto' || !file || rate === null) return;
-    const target = adaptiveQuality.current.sample(
-      selectAutoQuality(file, rate, speed),
-      performance.now(),
-    );
-    if (target) {
-      start.current = positionRef.current;
-      setAutoQuality(target);
-    }
-  };
   const effectiveSubtitle = canTranscode && !uploadedId ? subtitle : '-1';
   const effectiveSubtitleID = canTranscode ? uploadedId : '';
   const hasBurnedSubtitle = effectiveSubtitle !== '-1' || Boolean(effectiveSubtitleID);
+  const subtitleCodec = file?.tracks.find(
+    (track) => track.type === 'subtitle' && track.index === Number(subtitle),
+  )?.codec;
+  const canStyleSubtitle =
+    hasBurnedSubtitle &&
+    (Boolean(uploadedId) || !['hdmv_pgs_subtitle', 'dvd_subtitle'].includes(subtitleCodec ?? ''));
   const [burnDelay] = useDebouncedValue(subtitleDelay, 500);
   const effectiveBurnDelay = hasBurnedSubtitle ? burnDelay : 0;
   const [revision, setRevision] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [volume, setVolume] = useState(0.8);
-  const [speed, setSpeed] = useState('1');
+  const [volume, setVolume] = useState(saved.volume ?? 0.8);
+  const [speed, setSpeed] = useState(saved.speed ?? '1');
   const [method, setMethod] = useState('direct');
   const [streamInfo, setStreamInfo] = useState<DTO<'PlaybackStreamDTO'>>();
   const [streamSize, setStreamSize] = useState<{ width: number; height: number } | null>(null);
@@ -231,6 +250,7 @@ function Surface() {
   }, [auth]);
   useEffect(() => {
     if (
+      casting ||
       !state.fileId ||
       !video.current ||
       !auth ||
@@ -243,6 +263,7 @@ function Surface() {
     const frozen = frame.current;
     const headers = { Authorization: `Bearer ${auth}` };
     const abort = new AbortController();
+    const progressAbort = new AbortController();
     let cancelled = false;
     let session: DTO<'PlaybackDTO'> | undefined;
     let hls: Hls | undefined;
@@ -311,7 +332,6 @@ function Surface() {
               entry.responseEnd,
             );
             recordRate(rate);
-            sampleQuality.current(rate, el.playbackRate);
           }
         }
       });
@@ -345,12 +365,14 @@ function Surface() {
       const body = { sequence: ++seq, position: positionRef.current };
       chain = chain
         .then(async () => {
+          if (cancelled) return;
           result(
             await api.POST('/api/v1/playback/{id}/progress', {
               params: { path: { id } },
               body,
               keepalive: true,
               headers,
+              signal: progressAbort.signal,
             }),
           );
           void queryClient.invalidateQueries({
@@ -370,6 +392,8 @@ function Surface() {
       }
     };
     const onPause = () => {
+      // Source teardown can dispatch pause after the next effect attaches.
+      if (el.paused && el.readyState >= 2) wantsPlayback.current = false;
       setPlaying(false);
       report();
     };
@@ -378,6 +402,9 @@ function Surface() {
       if (el.readyState < 2) return;
       setLoading(false);
       if (frozen) frozen.hidden = true;
+    };
+    const onPlay = () => {
+      if (!el.paused) wantsPlayback.current = true;
     };
     const onPlaying = () => {
       onReady();
@@ -404,14 +431,16 @@ function Surface() {
     const onLoaded = () => {
       onVideoResize();
       if (session?.method === 'direct' && initial > 0) el.currentTime = initial;
+      if (cancelled || !wantsPlayback.current) return;
       void el.play().catch(() => {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       });
     };
     el.addEventListener('progress', onProgress);
     el.addEventListener('resize', onVideoResize);
     el.addEventListener('timeupdate', onTime);
     el.addEventListener('pause', onPause);
+    el.addEventListener('play', onPlay);
     el.addEventListener('playing', onPlaying);
     el.addEventListener('waiting', onWaiting);
     el.addEventListener('seeking', onWaiting);
@@ -445,6 +474,9 @@ function Surface() {
             subtitleIndex: Number(effectiveSubtitle),
             ...(effectiveSubtitleID ? { subtitleId: effectiveSubtitleID } : {}),
             subtitleDelay: effectiveBurnDelay,
+            ...(subtitleFont
+              ? { subtitleFont: subtitleFont as DTO<'PlaybackRequest'>['subtitleFont'] }
+              : {}),
             maxBitrate:
               quality === 'auto'
                 ? automaticBitrate
@@ -536,21 +568,12 @@ function Surface() {
         setOffset(base);
         const url = `${session.url}?token=${encodeURIComponent(streamToken ?? '')}`;
         mediaURL = new URL(url, window.location.href).href;
-        if (session.method === 'direct' && quality === 'auto' && canTranscode) {
-          for (let sample = 0; sample < 2 && !cancelled; sample++) {
-            const rate = await measurePlaybackRate(mediaURL, abort.signal);
-            recordRate(rate);
-            sampleQuality.current(rate, el.playbackRate);
-          }
-          if (cancelled) return;
-        }
         if (session.method === 'direct') el.src = url;
         else if (session.protocol === 'mp4' && support) {
           setDownloadRate(0);
           void playRemux(el, url, support.remuxMime, abort.signal, (bytes, started, ended) => {
             const rate = transferRate(bytes, started, ended);
             recordRate(rate);
-            sampleQuality.current(rate, el.playbackRate);
           }).catch((error: unknown) => {
             if (!cancelled) failPlayback(error instanceof RemuxDecodeError);
           });
@@ -585,13 +608,6 @@ function Surface() {
                   data.frag.stats.loading.end,
                 ),
               );
-              if (data.frag.type === 'main' && !data.frag.stats.aborted) {
-                const stats = data.part?.stats ?? data.frag.stats;
-                sampleQuality.current(
-                  transferRate(stats.loaded, stats.loading.first, stats.loading.end),
-                  el.playbackRate,
-                );
-              }
               activeStats = undefined;
             });
             hls.on(Hls.Events.BUFFER_APPENDED, onProgress);
@@ -628,19 +644,34 @@ function Surface() {
       el.removeEventListener('progress', onProgress);
       el.removeEventListener('resize', onVideoResize);
       abort.abort();
-      report();
+      progressAbort.abort();
       const owned = session;
       if (owned)
-        void chain.finally(() =>
-          api.DELETE('/api/v1/playback/{id}', {
-            params: { path: { id: owned.id } },
-            keepalive: true,
-            headers,
-          }),
-        );
+        void (
+          owned.state === 'ready'
+            ? api
+                .POST('/api/v1/playback/{id}/progress', {
+                  params: { path: { id: owned.id } },
+                  body: { sequence: ++seq, position: positionRef.current },
+                  keepalive: true,
+                  headers,
+                  signal: AbortSignal.timeout(2000),
+                })
+                .catch(() => {})
+            : Promise.resolve()
+        )
+          .finally(() =>
+            api.DELETE('/api/v1/playback/{id}', {
+              params: { path: { id: owned.id } },
+              keepalive: true,
+              headers,
+            }),
+          )
+          .catch(() => {});
       window.removeEventListener('pagehide', report);
       el.removeEventListener('timeupdate', onTime);
       el.removeEventListener('pause', onPause);
+      el.removeEventListener('play', onPlay);
       el.removeEventListener('playing', onPlaying);
       el.removeEventListener('waiting', onWaiting);
       el.removeEventListener('seeking', onWaiting);
@@ -665,12 +696,14 @@ function Surface() {
       el.load();
     };
   }, [
+    casting,
     state.fileId,
     auth,
     audio,
     effectiveSubtitle,
     effectiveSubtitleID,
     effectiveBurnDelay,
+    subtitleFont,
     effectiveQuality,
     automaticBitrate,
     quality,
@@ -695,12 +728,16 @@ function Surface() {
   };
   const next = async () => {
     if (!state.detail?.nextId) return;
+    const generation = state.generation;
+    const fileId = state.fileId;
     try {
       const detail = result(
         await api.GET('/api/v1/items/{id}', { params: { path: { id: state.detail.nextId } } }),
       );
+      const current = useNativePlayer.getState();
+      if (current.generation !== generation || current.fileId !== fileId) return;
       const f = detail.files.find((f) => f.available);
-      if (f) state.play(detail, f.id);
+      if (f) current.play(detail, f.id);
     } catch {
       toast.error(t('error'));
     }
@@ -729,6 +766,7 @@ function Surface() {
           <h2>{state.detail.item.title}</h2>
         </div>
         <Group gap="xs">
+          <div className="player-cast-action" ref={setCastButtonTarget} />
           <button
             className="icon-button"
             aria-label={t(state.expanded ? 'collapse' : 'expand')}
@@ -744,7 +782,7 @@ function Surface() {
           </button>
         </Group>
       </div>
-      <div className="media-stage">
+      <div className="media-stage" style={{ display: casting ? 'none' : undefined }}>
         <video
           ref={video}
           preload="auto"
@@ -752,6 +790,7 @@ function Surface() {
           onClick={() => {
             const el = video.current;
             if (el) {
+              wantsPlayback.current = el.paused;
               if (el.paused) void el.play().catch(() => setError(true));
               else el.pause();
             }
@@ -773,7 +812,7 @@ function Surface() {
           </div>
         )}
       </div>
-      {error && (
+      {error && !casting && (
         <Alert color="red" className="player-error">
           {t(errorKey)}
           <Button variant="subtle" onClick={() => restart(() => setRevision((v) => v + 1))}>
@@ -781,7 +820,7 @@ function Surface() {
           </Button>
         </Alert>
       )}
-      <div className="player-controls">
+      <div className="player-controls" style={{ display: casting ? 'none' : undefined }}>
         <div className="seek-row">
           <span>{clockTime(position)}</span>
           <Slider
@@ -829,8 +868,11 @@ function Surface() {
               className="play-toggle"
               aria-label={t(playing ? 'pause' : 'play')}
               onClick={() => {
-                if (video.current?.paused) void video.current.play().catch(() => setError(true));
-                else video.current?.pause();
+                const el = video.current;
+                if (!el) return;
+                wantsPlayback.current = el.paused;
+                if (el.paused) void el.play().catch(() => setError(true));
+                else el.pause();
               }}
             >
               {playing ? <Pause /> : <Play />}
@@ -852,7 +894,10 @@ function Surface() {
                 max={1}
                 step={0.01}
                 value={volume}
-                onChange={setVolume}
+                onChange={(v) => {
+                  setVolume(v);
+                  remember({ volume: v });
+                }}
               />
             </div>
           </Group>
@@ -864,7 +909,12 @@ function Surface() {
                 disabled={!canTranscode}
                 title={!canTranscode ? t('native.transcodingDisabled') : undefined}
                 value={canTranscode ? quality : '0'}
-                onChange={(v) => restart(() => setQuality(v ?? 'auto'))}
+                onChange={(v) =>
+                  restart(() => {
+                    setQuality(v);
+                    remember({ quality: v });
+                  })
+                }
                 data={[
                   { value: 'auto', label: t('playerQuality.auto') },
                   { value: '0', label: t('original') },
@@ -877,7 +927,12 @@ function Surface() {
                 portalTarget={wrapper.current ?? undefined}
                 label={t('audio')}
                 value={audio}
-                onChange={(v) => restart(() => setAudio(v ?? '-1'))}
+                onChange={(v) =>
+                  restart(() => {
+                    setAudio(v);
+                    remember({ audio: v });
+                  })
+                }
                 data={[
                   { value: '-1', label: t('default') },
                   ...file.tracks
@@ -900,11 +955,25 @@ function Surface() {
                           await subtitles.refetch();
                           restart(() => {
                             setSubtitle(`upload:${id}`);
+                            remember({ subtitle: `upload:${id}` });
                           });
                         }}
                       />
                     ) : (
                       <span>{t('native.transcodingDisabled')}</span>
+                    )}
+                    {canTranscode && system.data?.capabilities.openSubtitles && (
+                      <OpenSubtitles
+                        fileId={file.id}
+                        portalTarget={wrapper.current ?? undefined}
+                        onDownloaded={async (id) => {
+                          await subtitles.refetch();
+                          restart(() => {
+                            setSubtitle(`upload:${id}`);
+                            remember({ subtitle: `upload:${id}` });
+                          });
+                        }}
+                      />
                     )}
                     {subtitles.data?.items.find((sub) => sub.id === uploadedId)?.uploaded && (
                       <UploadedSubtitleDelete
@@ -914,6 +983,7 @@ function Surface() {
                           await subtitles.refetch();
                           restart(() => {
                             setSubtitle('-1');
+                            remember({ subtitle: '-1' });
                           });
                         }}
                       />
@@ -923,7 +993,8 @@ function Surface() {
                 value={canTranscode && uploadedId ? 'upload:' + uploadedId : effectiveSubtitle}
                 onChange={(v) =>
                   restart(() => {
-                    setSubtitle(v ?? '-1');
+                    setSubtitle(v);
+                    remember({ subtitle: v });
                   })
                 }
                 data={[
@@ -942,6 +1013,22 @@ function Surface() {
                     : []),
                 ]}
               />
+              <PlaybackOption
+                portalTarget={wrapper.current ?? undefined}
+                label={t('subtitleRender.font')}
+                value={subtitleFont}
+                disabled={!canStyleSubtitle}
+                onChange={(v) =>
+                  restart(() => {
+                    setSubtitleFont(v);
+                    remember({ font: v });
+                  })
+                }
+                data={[
+                  { value: '', label: t('default') },
+                  ...SUBTITLE_FONTS.map((font) => ({ value: font, label: font })),
+                ]}
+              />
               <SubtitleTiming
                 key={subtitle}
                 active={personalTiming.ready && hasBurnedSubtitle}
@@ -955,7 +1042,10 @@ function Surface() {
                 portalTarget={wrapper.current ?? undefined}
                 label={t('speed')}
                 value={speed}
-                onChange={(v) => setSpeed(v ?? '1')}
+                onChange={(v) => {
+                  setSpeed(v);
+                  remember({ speed: v });
+                }}
                 data={['0.75', '1', '1.25', '1.5', '2'].map((v) => ({ value: v, label: `${v}x` }))}
               />
             </div>
@@ -979,6 +1069,38 @@ function Surface() {
           </Group>
         </div>
       </div>
+      <CastPlayer
+        buttonTarget={castButtonTarget}
+        file={file}
+        title={state.detail.item.title}
+        position={position}
+        options={{
+          audioIndex: Number(audio),
+          subtitleIndex: Number(effectiveSubtitle),
+          ...(effectiveSubtitleID ? { subtitleId: effectiveSubtitleID } : {}),
+          subtitleDelay: effectiveBurnDelay,
+          ...(subtitleFont
+            ? { subtitleFont: subtitleFont as DTO<'PlaybackRequest'>['subtitleFont'] }
+            : {}),
+        }}
+        onNext={state.detail.nextId ? () => void next() : undefined}
+        onFinished={() => {
+          if (state.detail?.nextId) void next();
+          else state.stop();
+        }}
+        onActive={(active) => {
+          if (active) {
+            video.current?.pause();
+            setPlaying(false);
+          }
+          setCasting(active);
+        }}
+        onPosition={(value) => {
+          positionRef.current = value;
+          start.current = value;
+          setPosition(value);
+        }}
+      />
       <span hidden>{offset}</span>
     </div>
   );

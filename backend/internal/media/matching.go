@@ -15,16 +15,17 @@ import (
 var ErrNeedsIdentification = errors.New("Metadata match is ambiguous or missing; identify this item manually")
 
 type Match struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Name          string `json:"name"`
-	OriginalTitle string `json:"original_title"`
-	OriginalName  string `json:"original_name"`
-	Overview      string `json:"overview"`
-	Date          string `json:"release_date"`
-	Air           string `json:"first_air_date"`
-	Score         int
-	Recommended   bool
+	ID             int    `json:"id"`
+	Title          string `json:"title"`
+	Name           string `json:"name"`
+	OriginalTitle  string `json:"original_title"`
+	OriginalName   string `json:"original_name"`
+	Overview       string `json:"overview"`
+	Date           string `json:"release_date"`
+	Air            string `json:"first_air_date"`
+	Score          int
+	Recommended    bool
+	matchingTitles []string
 }
 
 // SearchMetadata accepts a title or a release filename, retaining the parsed year.
@@ -33,12 +34,40 @@ func SearchMetadata(ctx context.Context, token, search, kind string, year int, l
 	if kind == "series" {
 		kind = "tv"
 	}
+	matches, err := searchMetadataLanguage(ctx, token, title, kind, language)
+	if err != nil {
+		return matches, title, year, err
+	}
+	RankMatches(matches, title, year)
+	if language == "en-US" || len(matches) == 0 || matches[0].Recommended {
+		return matches, title, year, nil
+	}
+	// A localized title and its original title may both differ from an English
+	// release filename. Use English names only as matching evidence for the same
+	// provider IDs; keep the requested language's display titles and overviews.
+	english, err := searchMetadataLanguage(ctx, token, title, kind, "en-US")
+	if err != nil {
+		return matches, title, year, err
+	}
+	byID := make(map[int]Match, len(english))
+	for _, m := range english {
+		byID[m.ID] = m
+	}
+	for n := range matches {
+		if m, ok := byID[matches[n].ID]; ok {
+			matches[n].matchingTitles = []string{m.Title, m.Name, m.OriginalTitle, m.OriginalName}
+		}
+	}
+	RankMatches(matches, title, year)
+	return matches, title, year, nil
+}
+
+func searchMetadataLanguage(ctx context.Context, token, title, kind, language string) ([]Match, error) {
 	var result struct {
 		Results []Match `json:"results"`
 	}
 	err := TMDB(ctx, token, "/search/"+kind+"?query="+url.QueryEscape(title)+"&language="+url.QueryEscape(language), &result)
-	RankMatches(result.Results, title, year)
-	return result.Results, title, year, err
+	return result.Results, err
 }
 
 func metadataQuery(search string, year int) (string, int) {
@@ -107,6 +136,9 @@ func RankMatches(matches []Match, title string, year int) {
 			m.Title, m.Date = m.Name, m.Air
 		}
 		m.Score = max(titleScore(title, m.Title), titleScore(title, m.OriginalTitle), titleScore(title, m.OriginalName))
+		for _, alias := range m.matchingTitles {
+			m.Score = max(m.Score, titleScore(title, alias))
+		}
 		if year > 0 && len(m.Date) >= 4 {
 			y, _ := strconv.Atoi(m.Date[:4])
 			if y == year {

@@ -296,7 +296,13 @@ export function Catalog({
           ? requestedKind
           : undefined
         : requestedKind || undefined;
+  const sortOptions = ['watching', 'title', 'newest'] as const;
+  const requestedSort = params.get('sort');
+  const sort: NonNullable<DTO<'CatalogQuery'>['sort']> =
+    sortOptions.find((value) => value === requestedSort) ??
+    (library && ['music', 'podcasts', 'audiobooks'].includes(library.kind) ? 'title' : 'watching');
   const query = {
+    sort,
     artist: params.get('artist') || undefined,
     topLevel: mode === 'search',
     libraryId: mode === 'library' && !parentId ? id : undefined,
@@ -307,7 +313,8 @@ export function Catalog({
     limit: 36,
   };
   const data = useInfiniteQuery({
-    queryKey: ['native', user, 'catalog', query],
+    // A completed scan can hide moved/missing paths; do not reuse its old pages.
+    queryKey: ['native', user, 'catalog', query, library?.lastScanAt],
     initialPageParam: '',
     queryFn: async ({ pageParam, signal }) =>
       result(
@@ -413,6 +420,18 @@ export function Catalog({
                 }}
               />
             )}
+            <Select
+              aria-label={t('sort')}
+              value={sort}
+              allowDeselect={false}
+              data={sortOptions.map((value) => ({ value, label: t(`catalogSort.${value}`) }))}
+              onChange={(value) => {
+                if (!value) return;
+                const next = new URLSearchParams(params);
+                next.set('sort', value);
+                setParams(next);
+              }}
+            />
             <SegmentedControl
               aria-label={t('archive.view')}
               value={grouped ? 'title' : 'none'}
@@ -455,7 +474,9 @@ export function Catalog({
                 <Button
                   size="compact-xs"
                   variant="subtle"
-                  onClick={() => setCollapsed(new Set(groupTitles(items).map((g) => g.key)))}
+                  onClick={() =>
+                    setCollapsed(new Set(groupTitles(items, sort === 'title').map((g) => g.key)))
+                  }
                 >
                   {t('archive.collapseAll')}
                 </Button>
@@ -506,7 +527,7 @@ export function Catalog({
           </div>
         ) : grouped ? (
           <div className="title-groups">
-            {groupTitles(items).map((group, index) => (
+            {groupTitles(items, sort === 'title').map((group, index) => (
               <section key={group.key} className="title-group">
                 <button
                   className="title-group-heading"

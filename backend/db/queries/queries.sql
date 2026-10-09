@@ -59,10 +59,26 @@ SELECT * FROM items WHERE id=$1;
 SELECT * FROM items WHERE parent_id=$1 AND kind='episode' ORDER BY season,episode,sort_title,id;
 -- name: CatalogEpisodes :many
 SELECT i.* FROM items i WHERE i.parent_id=sqlc.arg(parent_id)::text AND i.kind='episode'
+AND EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id AND f.available)
 AND (sqlc.arg(is_admin)::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=sqlc.arg(user_id)::text))
 ORDER BY i.season,i.episode,i.sort_title,i.id;
 -- name: ListItems :many
-SELECT i.* FROM items i LEFT JOIN user_state resume_state ON resume_state.item_id=i.id AND resume_state.user_id=sqlc.arg(user_id)::text WHERE
+SELECT i.* FROM items i LEFT JOIN user_state resume_state ON resume_state.item_id=i.id AND resume_state.user_id=sqlc.arg(user_id)::text
+CROSS JOIN LATERAL (SELECT
+  CASE WHEN NOT sqlc.arg(resume)::boolean AND sqlc.arg(sort)::text='watching'
+    AND resume_state.position>0 AND NOT resume_state.watched THEN 1 ELSE 0 END AS watching_rank,
+  CASE WHEN sqlc.arg(resume)::boolean THEN COALESCE(resume_state.updated_at,'epoch'::timestamptz)
+    WHEN sqlc.arg(sort)::text='newest' THEN i.created_at
+    WHEN sqlc.arg(sort)::text='watching' AND resume_state.position>0 AND NOT resume_state.watched THEN resume_state.updated_at
+    ELSE 'epoch'::timestamptz END AS sort_time
+) sort_keys WHERE
+(i.kind NOT IN ('movie','episode','series')
+ OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id AND f.available)
+ OR (i.kind='series' AND EXISTS (
+   SELECT 1 FROM items child JOIN media_files f ON f.item_id=child.id
+   WHERE child.parent_id=i.id AND child.library_id=i.library_id AND f.available
+ )))
+AND
 (sqlc.arg(is_admin)::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=sqlc.arg(user_id)::text))
 AND (sqlc.arg(library_id)::text='' OR i.library_id=sqlc.arg(library_id))
 AND (sqlc.arg(parent_id)::text='' OR i.parent_id=sqlc.arg(parent_id))
@@ -74,13 +90,14 @@ AND (sqlc.arg(person_id)::text='' OR i.cast_members @> jsonb_build_array(jsonb_b
 AND (sqlc.arg(search)::text='' OR i.title ILIKE '%'||sqlc.arg(search)||'%' OR EXISTS(SELECT 1 FROM audio_metadata a WHERE a.item_id=i.id AND a.tags->>'artists' ILIKE '%'||sqlc.arg(search)||'%'))
 AND (NOT sqlc.arg(favorites)::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=sqlc.arg(user_id) AND s.item_id=i.id AND s.favorite))
 AND (NOT sqlc.arg(resume)::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=sqlc.arg(user_id) AND s.item_id=i.id AND s.position>0 AND NOT s.watched))
-AND (
-  (NOT sqlc.arg(resume)::boolean AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text))
-  OR (sqlc.arg(resume)::boolean AND (sqlc.arg(after_updated_at)::text='' OR
-    resume_state.updated_at < NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz OR
-    (resume_state.updated_at = NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text))))
-)
-ORDER BY CASE WHEN sqlc.arg(resume)::boolean THEN resume_state.updated_at END DESC, i.sort_title,i.id LIMIT sqlc.arg(page_limit);
+AND (sqlc.arg(after_id)::text=''
+ OR sort_keys.watching_rank < sqlc.arg(after_watching)::integer
+ OR (sort_keys.watching_rank = sqlc.arg(after_watching)::integer AND (
+   sort_keys.sort_time < COALESCE(NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz,'epoch'::timestamptz)
+   OR (sort_keys.sort_time = COALESCE(NULLIF(sqlc.arg(after_updated_at)::text,'')::timestamptz,'epoch'::timestamptz)
+       AND (i.sort_title,i.id)>(sqlc.arg(after_title)::text,sqlc.arg(after_id)::text))
+ )))
+ORDER BY sort_keys.watching_rank DESC,sort_keys.sort_time DESC,i.sort_title,i.id LIMIT sqlc.arg(page_limit);
 -- name: ItemFiles :many
 SELECT * FROM media_files WHERE item_id=$1 ORDER BY path;
 -- name: GetFile :one
@@ -102,7 +119,7 @@ INSERT INTO user_state(user_id,item_id,position,watched) VALUES($1,$2,$3,$4) ON 
 -- name: Enqueue :one
 INSERT INTO jobs(id,role,kind,resource_id,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(kind,resource_id) WHERE state IN ('pending','running') DO UPDATE SET resource_id=excluded.resource_id RETURNING *;
 -- name: ClaimJob :one
-WITH candidate AS (SELECT j.id FROM jobs j WHERE j.role=$1 AND next_attempt_at<=now() AND NOT cancel_requested AND attempts<3 AND (state='pending' OR (state='running' AND lease_until<now() AND j.role IN ('scanner','downloader'))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+WITH candidate AS (SELECT j.id FROM jobs j WHERE j.role=$1 AND next_attempt_at<=now() AND NOT cancel_requested AND attempts<3 AND (state='pending' OR (state='running' AND lease_until<now() AND j.role IN ('scanner','downloader'))) ORDER BY CASE WHEN j.kind='subtitle_prepare' THEN 1 ELSE 0 END,j.created_at FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE jobs SET state='running',progress=0,total_files=0,processed_files=0,attempts=attempts+1,lease_id=$2,lease_until=now()+interval '30 seconds',updated_at=now() FROM candidate WHERE jobs.id=candidate.id RETURNING jobs.*;
 -- name: RenewJob :one
 UPDATE jobs SET lease_until=now()+interval '30 seconds',updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running' AND NOT cancel_requested RETURNING id;
@@ -121,7 +138,8 @@ LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
-LEFT JOIN media_files sf ON j.kind='subtitle_sync' AND sf.id=j.resource_id
+LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare') AND sf.id=j.resource_id)
+ OR (j.kind='subtitle_download' AND sf.id=j.payload->>'fileId')
 LEFT JOIN items si ON si.id=sf.item_id
 ORDER BY j.created_at DESC LIMIT 100;
 -- name: Heartbeat :exec

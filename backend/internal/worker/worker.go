@@ -52,11 +52,12 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, role string
 	_, subtitleExtract := exec.LookPath("mkvextract")
 	subtitleReady := cfg.SubtitleEditing && subtitleFF == nil && subtitleProbe == nil
 	caps, _ := json.Marshal(struct {
-		SubtitleSync bool `json:"subtitleSync"`
-		SubtitleMKV  bool `json:"subtitleMKV"`
-		Audio        bool `json:"audio"`
-		YouTube      bool `json:"youtube"`
-	}{subtitleReady, subtitleReady && subtitleMKV == nil && subtitleExtract == nil, audioReady, youtubeReady})
+		OpenSubtitles bool `json:"openSubtitles"`
+		SubtitleSync  bool `json:"subtitleSync"`
+		SubtitleMKV   bool `json:"subtitleMKV"`
+		Audio         bool `json:"audio"`
+		YouTube       bool `json:"youtube"`
+	}{cfg.OpenSubtitlesKey != "", subtitleReady, subtitleReady && subtitleMKV == nil && subtitleExtract == nil, audioReady, youtubeReady})
 
 	slots := cfg.Concurrency
 	if role == "transcoder" || role == "downloader" {
@@ -139,6 +140,10 @@ func (w *Worker) runJob(ctx context.Context, j store.Job) {
 	switch j.Kind {
 	case "youtube_preview", "youtube_download":
 		err = w.youtubeJob(jobCtx, j)
+	case "subtitle_download":
+		err = w.downloadSubtitle(jobCtx, j)
+	case "subtitle_prepare":
+		err = w.prepareSubtitleJob(jobCtx, j)
 	case "subtitle_sync":
 		err = w.subtitleJob(jobCtx, j)
 	case "audio_tags":
@@ -148,7 +153,12 @@ func (w *Worker) runJob(ctx context.Context, j store.Job) {
 		if err = json.Unmarshal(j.Payload, &options); err != nil {
 			break
 		}
+		var lastReport time.Time
 		err = w.scan(jobCtx, j.ResourceID, options, func(done, total int) error {
+			if done != 0 && done != total && time.Since(lastReport) < 250*time.Millisecond {
+				return jobCtx.Err()
+			}
+			lastReport = time.Now()
 			progress := 0
 			if total > 0 {
 				progress = min(99, done*100/total)

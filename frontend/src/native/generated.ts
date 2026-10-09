@@ -281,6 +281,57 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/files/{id}/opensubtitles': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** searchOpenSubtitles */
+    get: operations['searchOpenSubtitles'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/files/{id}/opensubtitles/download': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** downloadOpenSubtitle */
+    post: operations['downloadOpenSubtitle'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/files/{id}/opensubtitles/jobs/{jobId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** getOpenSubtitleDownload */
+    get: operations['getOpenSubtitleDownload'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/files/{id}/subtitle-sync': {
     parameters: {
       query?: never;
@@ -937,6 +988,7 @@ export interface components {
       movies: boolean;
       music: boolean;
       musicBrainz: boolean;
+      openSubtitles: boolean;
       playback: boolean;
       plugins: boolean;
       series: boolean;
@@ -977,6 +1029,8 @@ export interface components {
       personId?: string;
       resume?: boolean;
       search?: string;
+      /** @enum {string} */
+      sort?: 'watching' | 'title' | 'newest';
       topLevel?: boolean;
     };
     CoverArtDTO: {
@@ -1019,7 +1073,18 @@ export interface components {
       subtitleBorderColor: string;
       subtitleColor: string;
       /** @enum {string} */
-      subtitleFont: 'Arial' | 'Noto Sans' | 'Noto Sans CJK';
+      subtitleFont:
+        | 'Arial'
+        | 'Noto Sans'
+        | 'Noto Serif'
+        | 'Noto Sans Mono'
+        | 'Noto Sans CJK'
+        | 'DejaVu Sans'
+        | 'DejaVu Serif'
+        | 'DejaVu Sans Mono'
+        | 'Liberation Sans'
+        | 'Liberation Serif'
+        | 'Liberation Mono';
       subtitleMargin: number;
       subtitleOutline: number;
       subtitleSize: number;
@@ -1215,6 +1280,36 @@ export interface components {
     MusicSearchQuery: {
       search: string;
     };
+    OpenSubtitleDTO: {
+      downloads: number;
+      fileId: number;
+      hearingImpaired: boolean;
+      language: string;
+      name: string;
+      release: string;
+    };
+    OpenSubtitleDownloadDTO: {
+      jobId: string;
+      state: string;
+      subtitleId: string;
+    };
+    OpenSubtitleJobParams: {
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      jobId: string;
+    };
+    OpenSubtitleRequest: {
+      fileId: number;
+    };
+    OpenSubtitlesDTO: {
+      items: components['schemas']['OpenSubtitleDTO'][];
+    };
+    OpenSubtitlesQuery: {
+      /** @enum {string} */
+      language: 'vi' | 'en';
+      search?: string;
+    };
     PasswordRequest: {
       currentPassword: string;
       newPassword: string;
@@ -1264,9 +1359,24 @@ export interface components {
       position: number;
       preview?: boolean;
       subtitleDelay?: number;
+      /** @enum {string} */
+      subtitleFont?:
+        | 'Arial'
+        | 'Noto Sans'
+        | 'Noto Serif'
+        | 'Noto Sans Mono'
+        | 'Noto Sans CJK'
+        | 'DejaVu Sans'
+        | 'DejaVu Serif'
+        | 'DejaVu Sans Mono'
+        | 'Liberation Sans'
+        | 'Liberation Serif'
+        | 'Liberation Mono';
       /** Format: uuid */
       subtitleId?: string;
       subtitleIndex: number;
+      /** @enum {string} */
+      target?: 'chromecast';
     };
     PlaybackStreamDTO: {
       audioBitrate: number;
@@ -3821,6 +3931,350 @@ export interface operations {
       };
     };
   };
+  searchOpenSubtitles: {
+    parameters: {
+      query: {
+        search?: string;
+        language: 'vi' | 'en';
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OpenSubtitlesDTO'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Requested Range Not Satisfiable */
+      416: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+    };
+  };
+  downloadOpenSubtitle: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['OpenSubtitleRequest'];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OpenSubtitleDownloadDTO'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Requested Range Not Satisfiable */
+      416: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+    };
+  };
+  getOpenSubtitleDownload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OpenSubtitleDownloadDTO'];
+        };
+      };
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Not Found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Conflict */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Requested Range Not Satisfiable */
+      416: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Too Many Requests */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+      /** @description Service Unavailable */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/problem+json': components['schemas']['Problem'];
+        };
+      };
+    };
+  };
   subtitleSyncSources: {
     parameters: {
       query?: never;
@@ -5977,6 +6431,7 @@ export interface operations {
   listItems: {
     parameters: {
       query?: {
+        sort?: 'watching' | 'title' | 'newest';
         artist?: string;
         topLevel?: boolean;
         personId?: string;

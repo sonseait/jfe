@@ -31,7 +31,7 @@ func (s *Server) register() {
 			return route.Output[SystemDTO]{}, fmt.Errorf("get system: parse encoding settings: %w", err)
 		}
 		general, err := appsettings.Load(ctx, s.DB)
-		return out(SystemDTO{Name: general.ServerName, Version: "0.1.0", SetupRequired: n == 0, Capabilities: Capabilities{Music: true, Audio: true, MusicBrainz: true, YouTube: s.youtubeAvailable(ctx), Movies: true, Series: true, Metadata: true, Playback: true, GPU: true, Transcoding: encoding.Mode == "nvidia"}}, err)
+		return out(SystemDTO{Name: general.ServerName, Version: "0.1.0", SetupRequired: n == 0, Capabilities: Capabilities{OpenSubtitles: s.openSubtitlesAvailable(ctx), Music: true, Audio: true, MusicBrainz: true, YouTube: s.youtubeAvailable(ctx), Movies: true, Series: true, Metadata: true, Playback: true, GPU: true, Transcoding: encoding.Mode == "nvidia"}}, err)
 	})
 	route.Get(r, op("/health", "getHealth", ""), func(ctx context.Context, _ route.Input[route.Empty, route.Empty, route.Empty]) (route.Output[HealthDTO], error) {
 		if s.Pool == nil || s.Pool.Ping(ctx) != nil {
@@ -224,6 +224,7 @@ func (s *Server) register() {
 	s.playbackRoutes()
 	s.settingsRoutes()
 	s.subtitleRoutes()
+	s.openSubtitleRoutes()
 	s.subtitleTimingRoutes()
 	s.subtitleSyncRoutes()
 }

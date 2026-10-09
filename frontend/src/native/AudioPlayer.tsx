@@ -7,6 +7,7 @@ import { persist } from 'zustand/middleware';
 import type Hls from 'hls.js';
 import { api, result, useAuth, type DTO } from './api';
 import { useNativePlayer } from './Player';
+import { CastPlayer } from './CastPlayer';
 export const isAudioItem = (kind: string) =>
   ['track', 'podcast_episode', 'book_part'].includes(kind);
 export const isAudioGroup = (kind: string) => ['album', 'podcast', 'audiobook'].includes(kind);
@@ -124,11 +125,12 @@ function AudioSurface() {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [queue, setQueue] = useState(false);
+  const [casting, setCasting] = useState(false);
   const speed = String(s.rate);
   const sleep = String(s.sleepMinutes);
   const [restart, setRestart] = useState(0);
   useEffect(() => {
-    if (!item) return;
+    if (!item || casting) return;
     let cancelled = false;
     let hls: Hls | undefined;
     let current: DTO<'PlaybackDTO'> | undefined;
@@ -148,6 +150,7 @@ function AudioSurface() {
         setDetail(d);
         setDuration(file.duration);
         const from = desired.current ?? (item.kind === 'track' ? 0 : d.item.position);
+        setPosition(from);
         current = result(
           await api.POST('/api/v1/playback', {
             body: {
@@ -240,7 +243,7 @@ function AudioSurface() {
       player.load();
       session.current = null;
     };
-  }, [item, restart]);
+  }, [item, restart, casting]);
   useEffect(() => {
     if (element.current) element.current.playbackRate = s.rate;
   }, [s.rate, ready]);
@@ -256,7 +259,7 @@ function AudioSurface() {
     return () => clearTimeout(timer);
   }, [s.sleepUntil]);
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !item) return;
+    if (!('mediaSession' in navigator) || !item || casting) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: item.title,
       artist: detail?.audio?.tags.artists.join(', ') ?? '',
@@ -275,7 +278,7 @@ function AudioSurface() {
       for (const a of ['play', 'pause', 'nexttrack', 'previoustrack'] as const)
         navigator.mediaSession.setActionHandler(a, null);
     };
-  }, [item, detail]);
+  }, [item, detail, casting]);
   function seek(value: number) {
     const p = session.current;
     if (!p) return;
@@ -314,57 +317,74 @@ function AudioSurface() {
         <strong>{item.title}</strong>
         <small>{detail?.audio?.tags.artists.join(', ')}</small>
       </div>
-      {error ? (
-        <Alert color="red">
-          {t('error')}
-          <Button
-            onClick={() => {
-              setError(false);
-              setRestart((n) => n + 1);
-            }}
-          >
-            {t('retry')}
-          </Button>
-        </Alert>
-      ) : (
-        <>
-          <Group gap="xs">
+      {!casting &&
+        (error ? (
+          <Alert color="red">
+            {t('error')}
             <Button
-              variant="subtle"
-              aria-label={t('audioUI.previous')}
-              onClick={() => s.advance(-1)}
-            >
-              <SkipBack size={18} />
-            </Button>
-            <Button
-              loading={!ready}
-              aria-label={t(paused ? 'play' : 'pause')}
               onClick={() => {
-                if (paused) void element.current?.play().catch(() => setError(true));
-                else element.current?.pause();
+                setError(false);
+                setRestart((n) => n + 1);
               }}
             >
-              {paused ? <Play size={18} /> : <Pause size={18} />}
+              {t('retry')}
             </Button>
-            <Button variant="subtle" aria-label={t('audioUI.next')} onClick={() => s.advance(1)}>
-              <SkipForward size={18} />
-            </Button>
-          </Group>
-          <div className="audio-dock-seek">
-            <Slider
-              aria-label={t('audioUI.seek')}
-              value={Math.min(position, duration)}
-              max={duration || 1}
-              onChange={setPosition}
-              onChangeEnd={seek}
-            />
-            <small>
-              {Math.floor(position / 60)}:{String(Math.floor(position % 60)).padStart(2, '0')} /{' '}
-              {Math.ceil(duration / 60)} {t('audioUI.minutes')}
-            </small>
-          </div>
-        </>
-      )}
+          </Alert>
+        ) : (
+          <>
+            <Group gap="xs">
+              <Button
+                variant="subtle"
+                aria-label={t('audioUI.previous')}
+                onClick={() => s.advance(-1)}
+              >
+                <SkipBack size={18} />
+              </Button>
+              <Button
+                loading={!ready}
+                aria-label={t(paused ? 'play' : 'pause')}
+                onClick={() => {
+                  if (paused) void element.current?.play().catch(() => setError(true));
+                  else element.current?.pause();
+                }}
+              >
+                {paused ? <Play size={18} /> : <Pause size={18} />}
+              </Button>
+              <Button variant="subtle" aria-label={t('audioUI.next')} onClick={() => s.advance(1)}>
+                <SkipForward size={18} />
+              </Button>
+            </Group>
+            <div className="audio-dock-seek">
+              <Slider
+                aria-label={t('audioUI.seek')}
+                value={Math.min(position, duration)}
+                max={duration || 1}
+                onChange={setPosition}
+                onChangeEnd={seek}
+              />
+              <small>
+                {Math.floor(position / 60)}:{String(Math.floor(position % 60)).padStart(2, '0')} /{' '}
+                {Math.ceil(duration / 60)} {t('audioUI.minutes')}
+              </small>
+            </div>
+          </>
+        ))}
+      <CastPlayer
+        file={detail?.files.find((file) => file.available)}
+        title={item.title}
+        position={position}
+        onPrevious={() => s.advance(-1)}
+        onNext={() => s.advance(1)}
+        onFinished={() => s.advance(1, true)}
+        onActive={(active) => {
+          if (active) element.current?.pause();
+          setCasting(active);
+        }}
+        onPosition={(value) => {
+          desired.current = value;
+          setPosition(value);
+        }}
+      />
       <Group gap={2}>
         <Button
           variant={s.shuffle ? 'light' : 'subtle'}
@@ -401,12 +421,14 @@ function AudioSurface() {
         <Stack>
           <Select
             label={t('audioUI.speed')}
+            disabled={casting}
             value={speed}
             onChange={(v) => useAudioPlayer.setState({ rate: Number(v ?? '1') })}
             data={['0.5', '0.75', '1', '1.25', '1.5', '1.75', '2']}
           />
           <Select
             label={t('audioUI.sleep')}
+            disabled={casting}
             value={sleep}
             onChange={(v) =>
               useAudioPlayer.setState({
@@ -423,7 +445,7 @@ function AudioSurface() {
             ]}
           />
           {(detail?.audio?.chapters ?? []).map((c, n) => (
-            <Button key={n} variant="subtle" onClick={() => seek(c.start)}>
+            <Button key={n} variant="subtle" disabled={casting} onClick={() => seek(c.start)}>
               {c.title || `${t('audioUI.chapter')} ${n + 1}`}
             </Button>
           ))}

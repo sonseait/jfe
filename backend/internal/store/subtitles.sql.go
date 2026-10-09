@@ -68,6 +68,50 @@ func (q *Queries) ListSubtitles(ctx context.Context, arg ListSubtitlesParams) ([
 	return items, nil
 }
 
+const openSubtitlesWorkerReady = `-- name: OpenSubtitlesWorkerReady :one
+SELECT EXISTS(SELECT 1 FROM workers WHERE role='scanner' AND heartbeat_at>now()-interval '60 seconds' AND capabilities->>'openSubtitles'='true')::boolean
+`
+
+func (q *Queries) OpenSubtitlesWorkerReady(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, openSubtitlesWorkerReady)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const saveDownloadedSubtitle = `-- name: SaveDownloadedSubtitle :one
+INSERT INTO uploaded_subtitles(id,file_id,user_id,name,cues) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(id) DO UPDATE SET id=excluded.id
+RETURNING id,name,jsonb_array_length(cues)::int AS cue_count
+`
+
+type SaveDownloadedSubtitleParams struct {
+	ID     string
+	FileID string
+	UserID string
+	Name   string
+	Cues   []byte
+}
+
+type SaveDownloadedSubtitleRow struct {
+	ID       string
+	Name     string
+	CueCount int32
+}
+
+func (q *Queries) SaveDownloadedSubtitle(ctx context.Context, arg SaveDownloadedSubtitleParams) (SaveDownloadedSubtitleRow, error) {
+	row := q.db.QueryRow(ctx, saveDownloadedSubtitle,
+		arg.ID,
+		arg.FileID,
+		arg.UserID,
+		arg.Name,
+		arg.Cues,
+	)
+	var i SaveDownloadedSubtitleRow
+	err := row.Scan(&i.ID, &i.Name, &i.CueCount)
+	return i, err
+}
+
 const saveSubtitle = `-- name: SaveSubtitle :one
 INSERT INTO uploaded_subtitles(id,file_id,user_id,name,cues) VALUES($1,$2,$3,$4,$5) RETURNING id,name,jsonb_array_length(cues)::int AS cue_count
 `

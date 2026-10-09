@@ -70,7 +70,9 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		return e
 	}
 	var b struct {
+		Target                                           string
 		AudioIndex, SubtitleIndex, MaxBitrate, MaxHeight int
+		SubtitleFont                                     string
 		SubtitleID                                       string
 		SubtitleDelay                                    float64
 		Position                                         float64
@@ -90,6 +92,15 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	cfg, e := media.ParseEncoding(data)
 	if e != nil {
 		return e
+	}
+	if b.SubtitleFont != "" {
+		if !media.ValidSubtitleFont(b.SubtitleFont) {
+			return fmt.Errorf("invalid subtitle font")
+		}
+		cfg.SubtitleFont = b.SubtitleFont
+	}
+	if b.Target == "chromecast" {
+		cfg.AudioCodec = "aac"
 	}
 	var probe media.Probe
 	if e = json.Unmarshal(f.Probe, &probe); e != nil {
@@ -169,6 +180,8 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		args = append(args, "-c:v", "copy")
 		if b.Decision.AudioAction == "copy" {
 			args = append(args, "-c:a", "copy")
+		} else if b.Target == "chromecast" {
+			args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k")
 		} else {
 			args = append(args, remuxAudioArgs(probe, b.AudioIndex)...)
 		}
@@ -183,18 +196,15 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		}
 	} else {
 		args = append(args, videoArgs...)
+		if b.Target == "chromecast" {
+			// Bound the output independently of source frame rate/encoder defaults.
+			args = append(args, "-r", "30", "-profile:v", "high", "-level:v", "4.1")
+		}
 		args = append(args, "-c:a", cfg.AudioCodec, "-ac", "2", "-b:a", strconv.Itoa(cfg.AudioBitrate))
-		filters := []string{}
+		filters := cudaPlaybackFilters(toneMap, b.MaxHeight)
 		if toneMap != "" {
 			args = append(args, media.SDRColorArgs()...)
 			args = append(args, "-filter_threads", "2", "-filter_complex_threads", "2", "-map_metadata", "-1")
-		}
-		// CUDA resize/format conversion also applies to SDR. NVENC receives
-		// eight-bit NV12 CUDA frames; HDR tone mapping remains before resize.
-		if b.MaxHeight > 0 {
-			filters = append(filters, cudaResolutionFilter(b.MaxHeight)+":format=nv12")
-		} else {
-			filters = append(filters, "scale_cuda=format=nv12")
 		}
 		bitmap := false
 		if b.SubtitleIndex >= 0 || b.SubtitleID != "" {
@@ -204,7 +214,7 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				}
 			}
 			if bitmap {
-				args = append(args, "-filter_complex", bitmapSubtitleGraph(bitmapBaseFilter(toneMap), b.SubtitleIndex, b.SubtitleDelay, bitmapOutputFilters(filters)))
+				args = append(args, "-filter_complex", bitmapSubtitleGraph(bitmapBaseFilter(toneMap), b.SubtitleIndex, b.SubtitleDelay, bitmapOutputFilters(cudaPlaybackFilters("", b.MaxHeight))))
 				for n := 0; n < len(args)-1; n++ {
 					if args[n] == "-map" && args[n+1] == "0:v:0" {
 						args[n+1] = "[v]"
@@ -251,27 +261,25 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 					if err := json.Unmarshal(cueData, &cues); err != nil {
 						return err
 					}
-					content, err := media.SubtitlesSRT(cues)
+					content, err := media.SubtitlesASS(cues)
 					if err != nil {
 						return err
 					}
-					subtitlePath = filepath.Join(dir, "subtitles.srt")
+					subtitlePath = filepath.Join(dir, "subtitles.ass")
 					if err = os.WriteFile(subtitlePath, []byte(content), 0600); err != nil {
 						return err
 					}
-					subtitleMap = "0:0"
 				}
-				extract := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", subtitlePath, "-map", subtitleMap, "-c:s", "ass", filepath.Join(dir, "subtitles.ass"))
-				if e = extract.Run(); e != nil {
-					return fmt.Errorf("subtitle extraction failed: %w", e)
+				if b.SubtitleID == "" {
+					extract := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", subtitlePath, "-map", subtitleMap, "-c:s", "ass", filepath.Join(dir, "subtitles.ass"))
+					if e = extract.Run(); e != nil {
+						return fmt.Errorf("subtitle extraction failed: %w", e)
+					}
 				}
 				filters = append(filters, "hwdownload", "format=nv12", "format=yuv420p")
 				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass:force_style='%s',setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay, cfg.SubtitleStyle()))
 				filters = append(filters, "format=nv12", "hwupload_cuda")
 			}
-		}
-		if toneMap != "" && !bitmap {
-			filters = append([]string{toneMap}, filters...)
 		}
 		if len(filters) > 0 {
 			args = append(args, "-vf", strings.Join(filters, ","))
@@ -491,6 +499,21 @@ func filterSuffix(filters []string) string {
 
 func cudaResolutionFilter(height int) string {
 	return strings.Replace(resolutionFilter(height), "scale=", "scale_cuda=", 1)
+}
+
+// Resize HDR CUDA frames at their original bit depth before tone mapping. Only
+// tonemap_cuda converts HDR to eight-bit NV12; early NV12 conversion loses HDR data.
+func cudaPlaybackFilters(toneMap string, height int) []string {
+	if toneMap != "" {
+		if height > 0 {
+			return []string{cudaResolutionFilter(height), toneMap}
+		}
+		return []string{toneMap}
+	}
+	if height > 0 {
+		return []string{cudaResolutionFilter(height) + ":format=nv12"}
+	}
+	return []string{"scale_cuda=format=nv12"}
 }
 
 // Bitmap subtitles keep source coordinates until overlay, then resize on CUDA.

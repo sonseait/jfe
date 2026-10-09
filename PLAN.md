@@ -144,3 +144,6 @@ Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách 
 - Admin và người có quyền import trong thư viện được sync/xóa nguồn phụ đề dùng chung. Scanner sửa timestamp UTF-8 SRT/VTT/ASS/SSA rời hoặc remux track text MKV, không encode video/audio.
 - Cho phép xóa track nhúng MKV (kể cả PGS/DVD), file phụ đề rời và upload cá nhân của chủ sở hữu. Xóa track dùng để burn-in khi phát; không xử lý chữ đã encode vào hình ảnh video.
 - Bật qua `JFE_SUBTITLE_EDITING`, mặc định tắt. API/transcoder chỉ đọc; scanner có quyền ghi có chủ đích. Xác nhận thao tác ghi đè/xóa; khóa file, kiểm tra fingerprint, journal phục hồi, thay thế atomic và không giữ backup sau khi hoàn tất. Chặn chỉnh sửa khi file đang được phát.
+
+- Tìm phụ đề OpenSubtitles.com tùy chọn theo phim/tập và ngôn ngữ EN/VI, tải và giải nén qua job scanner vào kho phụ đề cá nhân; không sửa media gốc. Cấu hình credentials phía server, tôn trọng quyền thư viện và hạn mức nhà cung cấp.
+- Bổ sung font phụ đề text và ghi nhớ lựa chọn phát theo tài khoản/file phim trên cùng trình duyệt; timing cá nhân tiếp tục lưu phía server.

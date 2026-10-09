@@ -76,6 +76,7 @@ func (q *Queries) CancelPlaybackJobs(ctx context.Context, resourceID string) err
 
 const catalogEpisodes = `-- name: CatalogEpisodes :many
 SELECT i.id, i.library_id, i.parent_id, i.kind, i.title, i.sort_title, i.year, i.season, i.episode, i.overview, i.poster, i.provider_id, i.metadata_locked, i.created_at, i.cast_members FROM items i WHERE i.parent_id=$1::text AND i.kind='episode'
+AND EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id AND f.available)
 AND ($2::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=$3::text))
 ORDER BY i.season,i.episode,i.sort_title,i.id
 `
@@ -123,7 +124,7 @@ func (q *Queries) CatalogEpisodes(ctx context.Context, arg CatalogEpisodesParams
 }
 
 const claimJob = `-- name: ClaimJob :one
-WITH candidate AS (SELECT j.id FROM jobs j WHERE j.role=$1 AND next_attempt_at<=now() AND NOT cancel_requested AND attempts<3 AND (state='pending' OR (state='running' AND lease_until<now() AND j.role IN ('scanner','downloader'))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+WITH candidate AS (SELECT j.id FROM jobs j WHERE j.role=$1 AND next_attempt_at<=now() AND NOT cancel_requested AND attempts<3 AND (state='pending' OR (state='running' AND lease_until<now() AND j.role IN ('scanner','downloader'))) ORDER BY CASE WHEN j.kind='subtitle_prepare' THEN 1 ELSE 0 END,j.created_at FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE jobs SET state='running',progress=0,total_files=0,processed_files=0,attempts=attempts+1,lease_id=$2,lease_until=now()+interval '30 seconds',updated_at=now() FROM candidate WHERE jobs.id=candidate.id RETURNING jobs.id, jobs.role, jobs.kind, jobs.resource_id, jobs.state, jobs.payload, jobs.error, jobs.progress, jobs.attempts, jobs.lease_id, jobs.lease_until, jobs.cancel_requested, jobs.created_at, jobs.updated_at, jobs.total_files, jobs.processed_files, jobs.next_attempt_at
 `
 
@@ -666,61 +667,81 @@ func (q *Queries) LibraryFiles(ctx context.Context, libraryID string) ([]MediaFi
 }
 
 const listItems = `-- name: ListItems :many
-SELECT i.id, i.library_id, i.parent_id, i.kind, i.title, i.sort_title, i.year, i.season, i.episode, i.overview, i.poster, i.provider_id, i.metadata_locked, i.created_at, i.cast_members FROM items i LEFT JOIN user_state resume_state ON resume_state.item_id=i.id AND resume_state.user_id=$1::text WHERE
-($2::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=$1::text))
-AND ($3::text='' OR i.library_id=$3)
-AND ($4::text='' OR i.parent_id=$4)
-AND ($5::boolean OR $3::text='' OR $4::text<>'' OR $6::text<>'' OR i.parent_id='')
-AND ($6::text='' OR i.kind=$6)
-AND (NOT $7::boolean OR i.parent_id='' OR ($8::text<>'' AND i.kind IN ('track','podcast_episode','book_part')))
-AND ($9::text='' OR EXISTS(SELECT 1 FROM audio_metadata a JOIN items child ON child.id=a.item_id WHERE (child.id=i.id OR child.parent_id=i.id) AND a.tags->'artists' ? $9))
-AND ($10::text='' OR i.cast_members @> jsonb_build_array(jsonb_build_object('id',$10::text)))
-AND ($8::text='' OR i.title ILIKE '%'||$8||'%' OR EXISTS(SELECT 1 FROM audio_metadata a WHERE a.item_id=i.id AND a.tags->>'artists' ILIKE '%'||$8||'%'))
-AND (NOT $11::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=$1 AND s.item_id=i.id AND s.favorite))
-AND (NOT $5::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=$1 AND s.item_id=i.id AND s.position>0 AND NOT s.watched))
-AND (
-  (NOT $5::boolean AND (i.sort_title,i.id)>($12::text,$13::text))
-  OR ($5::boolean AND ($14::text='' OR
-    resume_state.updated_at < NULLIF($14::text,'')::timestamptz OR
-    (resume_state.updated_at = NULLIF($14::text,'')::timestamptz AND (i.sort_title,i.id)>($12::text,$13::text))))
-)
-ORDER BY CASE WHEN $5::boolean THEN resume_state.updated_at END DESC, i.sort_title,i.id LIMIT $15
+SELECT i.id, i.library_id, i.parent_id, i.kind, i.title, i.sort_title, i.year, i.season, i.episode, i.overview, i.poster, i.provider_id, i.metadata_locked, i.created_at, i.cast_members FROM items i LEFT JOIN user_state resume_state ON resume_state.item_id=i.id AND resume_state.user_id=$1::text
+CROSS JOIN LATERAL (SELECT
+  CASE WHEN NOT $2::boolean AND $3::text='watching'
+    AND resume_state.position>0 AND NOT resume_state.watched THEN 1 ELSE 0 END AS watching_rank,
+  CASE WHEN $2::boolean THEN COALESCE(resume_state.updated_at,'epoch'::timestamptz)
+    WHEN $3::text='newest' THEN i.created_at
+    WHEN $3::text='watching' AND resume_state.position>0 AND NOT resume_state.watched THEN resume_state.updated_at
+    ELSE 'epoch'::timestamptz END AS sort_time
+) sort_keys WHERE
+(i.kind NOT IN ('movie','episode','series')
+ OR EXISTS (SELECT 1 FROM media_files f WHERE f.item_id=i.id AND f.available)
+ OR (i.kind='series' AND EXISTS (
+   SELECT 1 FROM items child JOIN media_files f ON f.item_id=child.id
+   WHERE child.parent_id=i.id AND child.library_id=i.library_id AND f.available
+ )))
+AND
+($4::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=i.library_id AND a.user_id=$1::text))
+AND ($5::text='' OR i.library_id=$5)
+AND ($6::text='' OR i.parent_id=$6)
+AND ($2::boolean OR $5::text='' OR $6::text<>'' OR $7::text<>'' OR i.parent_id='')
+AND ($7::text='' OR i.kind=$7)
+AND (NOT $8::boolean OR i.parent_id='' OR ($9::text<>'' AND i.kind IN ('track','podcast_episode','book_part')))
+AND ($10::text='' OR EXISTS(SELECT 1 FROM audio_metadata a JOIN items child ON child.id=a.item_id WHERE (child.id=i.id OR child.parent_id=i.id) AND a.tags->'artists' ? $10))
+AND ($11::text='' OR i.cast_members @> jsonb_build_array(jsonb_build_object('id',$11::text)))
+AND ($9::text='' OR i.title ILIKE '%'||$9||'%' OR EXISTS(SELECT 1 FROM audio_metadata a WHERE a.item_id=i.id AND a.tags->>'artists' ILIKE '%'||$9||'%'))
+AND (NOT $12::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=$1 AND s.item_id=i.id AND s.favorite))
+AND (NOT $2::boolean OR EXISTS(SELECT 1 FROM user_state s WHERE s.user_id=$1 AND s.item_id=i.id AND s.position>0 AND NOT s.watched))
+AND ($13::text=''
+ OR sort_keys.watching_rank < $14::integer
+ OR (sort_keys.watching_rank = $14::integer AND (
+   sort_keys.sort_time < COALESCE(NULLIF($15::text,'')::timestamptz,'epoch'::timestamptz)
+   OR (sort_keys.sort_time = COALESCE(NULLIF($15::text,'')::timestamptz,'epoch'::timestamptz)
+       AND (i.sort_title,i.id)>($16::text,$13::text))
+ )))
+ORDER BY sort_keys.watching_rank DESC,sort_keys.sort_time DESC,i.sort_title,i.id LIMIT $17
 `
 
 type ListItemsParams struct {
 	UserID         string
+	Resume         bool
+	Sort           string
 	IsAdmin        bool
 	LibraryID      string
 	ParentID       string
-	Resume         bool
 	Kind           string
 	TopLevel       bool
 	Search         string
 	Artist         string
 	PersonID       string
 	Favorites      bool
-	AfterTitle     string
 	AfterID        string
+	AfterWatching  int32
 	AfterUpdatedAt string
+	AfterTitle     string
 	PageLimit      int32
 }
 
 func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]Item, error) {
 	rows, err := q.db.Query(ctx, listItems,
 		arg.UserID,
+		arg.Resume,
+		arg.Sort,
 		arg.IsAdmin,
 		arg.LibraryID,
 		arg.ParentID,
-		arg.Resume,
 		arg.Kind,
 		arg.TopLevel,
 		arg.Search,
 		arg.Artist,
 		arg.PersonID,
 		arg.Favorites,
-		arg.AfterTitle,
 		arg.AfterID,
+		arg.AfterWatching,
 		arg.AfterUpdatedAt,
+		arg.AfterTitle,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -766,7 +787,8 @@ LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
-LEFT JOIN media_files sf ON j.kind='subtitle_sync' AND sf.id=j.resource_id
+LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare') AND sf.id=j.resource_id)
+ OR (j.kind='subtitle_download' AND sf.id=j.payload->>'fileId')
 LEFT JOIN items si ON si.id=sf.item_id
 ORDER BY j.created_at DESC LIMIT 100
 `

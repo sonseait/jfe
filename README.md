@@ -20,6 +20,13 @@ Create the initial administrator, add libraries and scan your media.
 TMDB metadata is optional. API documentation is served at :8090/docs and
 /openapi.json. The documentation viewer loads Scalar from a CDN.
 
+When Vietnamese metadata cannot confidently match an English release filename,
+identification also compares English titles for the same TMDB candidates. Display
+titles, descriptions and fetched metadata remain in the configured language.
+After updating API/scanner, rescan a library to retry items without a TMDB ID;
+automatic metadata lookup must be enabled. Existing IDs and metadata locks remain
+respected; administrators can identify an item manually when needed.
+
 Title details include cast names and roles from TMDB credits or local NFO
 `actor` entries. Select an actor to browse their titles in your accessible
 libraries. Apply migration 00006 before starting the updated backend. For
@@ -28,6 +35,11 @@ to fetch TMDB metadata, credits and actor portraits again. TMDB must be configur
 without it, scans use local metadata. Locked titles remain unchanged. Portraits
 are cached and served with library permission checks; missing images use initials.
 NFO actor `thumb` supports a local image inside the configured media root.
+Scanner accepts JPEG, PNG, WebP and GIF image data and normalizes remote posters
+and portraits to JPEG. An invalid/unavailable image emits a warning and preserves
+existing artwork, while the identified title, year, synopsis, credits and TMDB ID
+are still saved. Poster download precedes optional portraits; all image downloads
+share a 45-second budget. Refresh metadata to retry missing images after recovery.
 
 For shows, select the library folder containing `<show>/<season>/<episode>`.
 The show folder determines grouping, and season folders (`Season 02`, `S02`,
@@ -52,8 +64,9 @@ has a Reduce motion toggle; OS/browser reduced-motion preferences still apply.
 Requires Go 1.26+, PostgreSQL 17, the golang-migrate CLI, FFmpeg/ffprobe,
 Node 24 and pnpm 11.18.
 For video transcoding, FFmpeg must include h264_nvenc; subtitle burn-in also
-requires libass. The Debian runtime includes FFmpeg and DejaVu fonts. Test fixture
-generation uses libx264; application video encoding never does.
+requires libass. The Debian runtime includes FFmpeg, DejaVu, Noto (including CJK)
+and Liberation fonts. Arial resolves through fontconfig's installed substitutes.
+Application video encoding uses NVIDIA NVENC only.
 
 ```sh
 pnpm -C frontend install --frozen-lockfile
@@ -139,6 +152,14 @@ Use `docker-build` to build locally without publishing. With no `REGISTRY`,
 images are tagged `jfe-backend:latest` and `jfe-frontend:latest`.
 The backend image contains all four binaries: its default command is `api`;
 use the same image with command `scanner`, `downloader` or `transcoder` for the workers.
+Runtime dependencies are split across layers (FFmpeg, MKVToolNix, Python, text
+fonts and CJK fonts) to reduce individual registry uploads. The image omits
+unused Intel/AMD driver modules and CJK serif fonts, while retaining CUDA/NVENC,
+Noto Sans CJK and the selectable Latin font families. Container Go binaries omit
+debug symbols. Layer size can contribute to push timeouts; registry/proxy timeout
+settings and upload bandwidth still affect success.
+Fontconfig uses `/cache` for its writable user cache; the image maps the generic
+Noto Sans CJK selector to the installed regional CJK font families.
 
 ## Licensing
 
@@ -262,11 +283,17 @@ unfinished items, including show episodes. Each card displays the saved position
 and a progress bar; playback progress saves refresh the rail immediately.
 
 Video playback defaults to **Auto (network speed)** when NVENC transcoding is
-enabled. It uses measured download throughput to adjust bitrate and resolution
-while preserving the playback position; manual quality choices remain fixed.
+enabled. It selects bitrate and resolution once when opening a video using the
+browser's network-speed estimate, then keeps that choice for the whole viewing
+session. If the estimate is unavailable, it starts at Original. Download metrics
+do not change quality or restart playback; viewers can choose another quality manually.
 Matching subtitles are selected using the interface language, including
 `vi`/`vie`, Vietnamese and Tiếng Việt labels. Uploaded and embedded/sidecar subtitles are rendered into video by FFmpeg.
 All subtitle playback requires NVIDIA transcoding, including SRT/WebVTT.
+Uploaded/OpenSubtitles and cached text cues decode HTML entities such as `&amp;`
+and `&#39;` on import and render directly as ASS without HTML re-escaping.
+Original sidecars and uncached embedded tracks retain FFmpeg source decoding and
+do not use this entity normalization.
 
 Video playback now prefers native direct play, then video-copy fragmented MP4
 remux, then NVENC HLS. Browser support is checked against the source profile and
@@ -274,11 +301,22 @@ bit depth, including HEVC Main10. TrueHD/DTS audio can be converted to AAC witho
 encoding the HEVC video. HLS is used for video transcoding and legacy clients.
 Apply migration **00008_playback_decision** with `make -C backend migrate`, then
 rescan video libraries to refresh probe metadata and prepare text subtitles.
-Later scans reuse prepared embedded text subtitles for unchanged videos; changed
-files, sidecars and missing/corrupt cache are refreshed.
+Later scans reuse subtitle caches using SHA-256 fingerprints: video path, size,
+modification time, stream and cache/probe version for embedded tracks; bounded
+content hashes for sidecars. SRT/VTT sidecars are parsed directly without FFmpeg.
+Missing/corrupt caches are refreshed; failed preparation is retried after ten
+minutes or immediately when the source fingerprint changes. Missing embedded text
+cues are prepared by separate `subtitle_prepare` scanner jobs after indexing;
+all missing supported tracks are extracted in one container pass. Scan completion
+does not imply that every subtitle preparation job has completed. Videos are never
+fully hashed. Progress writes are throttled to at most four per second, with start
+and completion updates always reported.
 HDR stays copied when the client supports it. Required NVENC transcodes convert
 HDR10/PQ and HLG to limited-range BT.709 SDR using `tonemap_cuda`; HDR10+ uses
-its static HDR10 base. Decode, tone mapping, resize and encode stay on NVIDIA.
+its static HDR10 base. With a resolution ceiling, CUDA resizes HDR frames at their
+original bit depth before tone mapping, reducing the number of pixels processed.
+Decode, resize, tone mapping and encode stay on NVIDIA. Bitmap subtitle burn-in
+retains source-resolution composition before resize to preserve coordinates.
 Subtitle rendering downloads SDR frames for CPU libass/bitmap composition and uploads
 them back to the selected GPU. Single-layer Dolby Vision profile 8 with HDR10 base
 compatibility ID 1 uses its HDR10 base and discards Dolby Vision metadata; other
@@ -334,3 +372,128 @@ never update watched state or resume position.
 
 See [subtitle editing architecture](docs/subtitle-editor.md) for recovery behavior
 and validation boundaries.
+
+Video catalog lists hide movies/episodes with no available file and series with
+no available episodes. A successful rescan after a move hides the old path entry;
+the library catalog refreshes when the scan timestamp changes. Stored metadata
+and viewing state are retained. File identity is path-based, so this does not
+automatically transfer viewing history to the new path entry.
+
+Catalog sorting offers **Watching first** (the default for video browsing),
+**Title A–Z**, and **Recently added**. Watching first prioritizes your unfinished
+movies by latest viewing-state update, followed by remaining movies alphabetically.
+Sorting is applied before pagination and is stored in the page URL. Title grouping
+preserves the chosen order.
+
+
+### Chromecast
+
+Video and audio players offer **Cast** when Google Cast SDK detects a receiver in
+supported Chromium browsers on a secure origin (HTTPS, or localhost for sender
+development). Select a device to transfer the current item and position. Receiver
+controls provide pause/play, seek and volume; progress is saved to the current
+account. Disconnecting returns playback to the local player at its latest position.
+Episodes and audio queue changes retain the selected receiver while its Cast
+session remains connected. Closing a player stops its remote media and backend
+session; closing the sender page may leave the receiver running until its stream
+credential expires, so use **Stop casting** before closing the page.
+
+Always use the **Cast button inside JFE** for TV playback. This sends the media URL
+to the TV, which fetches and renders it directly; it does not mirror browser frames.
+Video display is handled by the receiver, independently of browser fullscreen.
+There is no tab/screen mirroring fallback, including during retries. Chrome's
+**Optimize fullscreen videos** option belongs to Chrome's mirroring UI and cannot
+be enabled or forced by a web application. Casting a tab/desktop through Chrome's
+menu remains outside JFE's control and may cause mirroring lag.
+
+JFE uses Google's Default Media Receiver and loads the Google-hosted sender SDK;
+no custom receiver registration or application ID is required. The browser needs
+access to `www.gstatic.com`. The receiver must reach the same JFE origin used by
+the browser, with trusted TLS when using HTTPS; localhost, a browser-only VPN,
+self-signed certificates and a proxy login page will not work for receiver fetches.
+Use a reachable hostname/address and allow device discovery on the local network.
+Stream paths must reach the API through the reverse proxy, including Range and
+OPTIONS requests. Cast sends only a session-scoped stream token, never the login
+token or authenticated artwork URLs.
+
+The initial receiver baseline is SDR H.264 up to 1080p/30 fps, level 4.1, with AAC
+mono/stereo audio. Compatible MP4 video and MP3/AAC audio can play directly;
+other compatible video containers use HLS video-copy remux and AAC conversion.
+Unsupported video, HDR, resolution reduction and selected subtitles require the
+existing NVIDIA transcoder; disabled video transcoding does not permit a CPU
+video fallback. Other audio formats use AAC HLS even with video transcoding
+disabled. Select audio/subtitle options before casting; local playback speed and
+audio sleep controls are unavailable while casting. Generated HLS seeks restart
+the backend stream from the requested source position. Changing quality or tracks
+requires returning to local playback and casting again. Chromecast hardware,
+receiver HLS behavior and deployment connectivity have not been verified on a
+real device.
+
+
+Cast recovers transient disconnects while the sender page stays open. It retains
+its backend stream and last confirmed position, rejoins the same Cast session ID
+without a device picker, and restores control without reloading media that is
+still playing on the TV. Receiver media errors or buffering without progress for
+30 seconds retry playback from the last confirmed source position, preserving
+pause state. Recovery makes at most six attempts with delays of 1, 2, 4, 8, 16 and
+30 seconds; 30 seconds of healthy playback/pause resets the budget. Offline time
+waits for the browser network to return. **Stop casting**, receiver cancellation
+and another item's takeover suppress recovery. If the TV has destroyed the Cast
+session, the Web Sender SDK cannot silently launch a replacement: **Select TV
+again** opens the picker only on your click and resumes at the saved position.
+Keep the sender page open; suspended/closed browser pages cannot guarantee retry.
+
+
+The Cast action now shares the video player's top toolbar and uses matching thin
+icons with an explicit icon/label gap; narrow layouts keep an accessible icon-only
+action. Playback creation has a 30-second response deadline and releases sessions whose
+IDs arrive after that deadline. Cast status distinguishes backend preparation, receiver loading and actual
+playback. A TV displaying **Default Media Receiver** has launched the receiver app;
+this alone does not mean its media load succeeded. The sender gives receiver media
+loads a 60-second timeout, explicitly describes MPEG-TS HLS audio/video segments,
+and retries a rejected direct file using HLS through the existing worker. API
+status codes and known SDK error codes are shown while retrying without exposing
+URLs, tokens or arbitrary exception text. Server preparation failures, receiver
+fetch/format failures and reconnection failures are shown separately. A reachable
+HTTPS page/API from the sender still does not prove TV-side DNS/TLS/network access.
+
+Cast reads the status of its own receiver media, including idle/error records that
+CAF's active-media accessor hides, and requests fresh status every ten seconds.
+A failed status request keeps recovery active until the receiver responds again.
+Video casting rejects receivers that explicitly advertise no video output, and
+shows a warning if the receiver reports that its HDMI input is inactive. Local
+playback pauses when Cast takes ownership. MPEG-TS HLS segments are served with
+`video/mp2t`. These checks do not prove that a TV displays frames successfully.
+
+Open **Media URL sent to the TV** in the Cast controls to inspect or copy the exact
+URL submitted to the receiver, including its temporary playback credential. This
+local diagnostic is available during loading, playback and receiver errors; it is
+replaced when a retry creates a new stream and is never logged. Keep the URL private.
+
+
+## OpenSubtitles and remembered movie options
+
+Configure `OPENSUBTITLES_API_KEY` on both API and scanner. Set
+`OPENSUBTITLES_TOKEN` too when your OpenSubtitles.com account requires authenticated
+downloads; renew expired tokens in the deployment configuration. A configured,
+healthy scanner enables the player’s **Find on OpenSubtitles** action under
+**Subtitles** when NVIDIA subtitle playback is enabled. Credentials stay on the
+server. Provider download quotas still apply.
+
+Search in Vietnamese or English using the identified movie/episode, or enter
+another title. **Download & use** queues a scanner job that downloads the selected
+provider file, expands ZIP/gzip in memory when needed, validates UTF-8/UTF-16 SRT
+or WebVTT (512 KiB text limit), and saves personal subtitle cues. The player selects
+it when the job completes. No original movie or sidecar is modified; downloaded
+subtitles use the existing personal timing/editor/deletion controls. Repeated
+requests for the same provider file reuse the stored personal subtitle without
+replacing any personal edits.
+
+The browser player remembers audio/subtitle selections (including Off), quality,
+font, volume and speed per signed-in account and media file on this browser.
+Changed track layouts or removed subtitles fall back to available choices.
+Personal subtitle timing continues to be stored on the server. The font menu
+adds Noto Serif/Mono, DejaVu and Liberation families; bitmap subtitles retain their
+original appearance. Rebuild the backend image to install the additional fonts,
+and deploy API/scanner/transcoder/frontend together. No database migration is
+needed for these changes. Native deployments must install matching font families.

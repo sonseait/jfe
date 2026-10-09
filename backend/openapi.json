@@ -2778,6 +2778,457 @@
         }
       }
     },
+    "/api/v1/files/{id}/opensubtitles": {
+      "get": {
+        "operationId": "searchOpenSubtitles",
+        "summary": "searchOpenSubtitles",
+        "tags": [
+          "jfe"
+        ],
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "vi",
+                "en"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenSubtitlesDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/files/{id}/opensubtitles/download": {
+      "post": {
+        "operationId": "downloadOpenSubtitle",
+        "summary": "downloadOpenSubtitle",
+        "tags": [
+          "jfe"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenSubtitleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenSubtitleDownloadDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/files/{id}/opensubtitles/jobs/{jobId}": {
+      "get": {
+        "operationId": "getOpenSubtitleDownload",
+        "summary": "getOpenSubtitleDownload",
+        "tags": [
+          "jfe"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenSubtitleDownloadDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/files/{id}/subtitle-sync": {
       "get": {
         "operationId": "subtitleSyncSources",
@@ -5440,6 +5891,19 @@
           "jfe"
         ],
         "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "watching",
+                "title",
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
           {
             "name": "artist",
             "in": "query",
@@ -9045,6 +9509,9 @@
           "musicBrainz": {
             "type": "boolean"
           },
+          "openSubtitles": {
+            "type": "boolean"
+          },
           "playback": {
             "type": "boolean"
           },
@@ -9062,6 +9529,7 @@
           }
         },
         "required": [
+          "openSubtitles",
           "transcoding",
           "movies",
           "series",
@@ -9166,6 +9634,14 @@
           },
           "search": {
             "maxLength": 200,
+            "type": "string"
+          },
+          "sort": {
+            "enum": [
+              "watching",
+              "title",
+              "newest"
+            ],
             "type": "string"
           },
           "topLevel": {
@@ -9355,7 +9831,15 @@
             "enum": [
               "Arial",
               "Noto Sans",
-              "Noto Sans CJK"
+              "Noto Serif",
+              "Noto Sans Mono",
+              "Noto Sans CJK",
+              "DejaVu Sans",
+              "DejaVu Serif",
+              "DejaVu Sans Mono",
+              "Liberation Sans",
+              "Liberation Serif",
+              "Liberation Mono"
             ],
             "type": "string"
           },
@@ -10192,6 +10676,124 @@
         ],
         "type": "object"
       },
+      "OpenSubtitleDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "downloads": {
+            "type": "integer"
+          },
+          "fileId": {
+            "type": "integer"
+          },
+          "hearingImpaired": {
+            "type": "boolean"
+          },
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "release": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fileId",
+          "name",
+          "language",
+          "release",
+          "downloads",
+          "hearingImpaired"
+        ],
+        "type": "object"
+      },
+      "OpenSubtitleDownloadDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "subtitleId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "subtitleId",
+          "state"
+        ],
+        "type": "object"
+      },
+      "OpenSubtitleJobParams": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "jobId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "jobId"
+        ],
+        "type": "object"
+      },
+      "OpenSubtitleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fileId": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "type": "object"
+      },
+      "OpenSubtitlesDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpenSubtitleDTO"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "OpenSubtitlesQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "enum": [
+              "vi",
+              "en"
+            ],
+            "type": "string"
+          },
+          "search": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "type": "object"
+      },
       "PasswordRequest": {
         "additionalProperties": false,
         "properties": {
@@ -10388,6 +10990,22 @@
             "minimum": -600,
             "type": "number"
           },
+          "subtitleFont": {
+            "enum": [
+              "Arial",
+              "Noto Sans",
+              "Noto Serif",
+              "Noto Sans Mono",
+              "Noto Sans CJK",
+              "DejaVu Sans",
+              "DejaVu Serif",
+              "DejaVu Sans Mono",
+              "Liberation Sans",
+              "Liberation Serif",
+              "Liberation Mono"
+            ],
+            "type": "string"
+          },
           "subtitleId": {
             "format": "uuid",
             "type": "string"
@@ -10395,6 +11013,12 @@
           "subtitleIndex": {
             "minimum": -1,
             "type": "integer"
+          },
+          "target": {
+            "enum": [
+              "chromecast"
+            ],
+            "type": "string"
           }
         },
         "required": [

@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	OpenSubtitlesKey, OpenSubtitlesToken                 string
 	DatabaseURL, Listen, MediaRoot, CacheRoot, TMDBToken string
 	LogLevel, LogFormat                                  string
 	Concurrency                                          int
@@ -31,6 +32,8 @@ func Load() (Config, error) {
 	v.SetDefault("JFE_PYTHON", "python3")
 	v.SetDefault("JFE_SUBTITLE_EDITING", false)
 	v.SetDefault("TMDB_TOKEN", "")
+	v.SetDefault("OPENSUBTITLES_API_KEY", "")
+	v.SetDefault("OPENSUBTITLES_TOKEN", "")
 	v.SetDefault("JFE_LOG_LEVEL", "info")
 	v.SetDefault("JFE_LOG_FORMAT", "json")
 	if err := v.ReadInConfig(); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -42,6 +45,7 @@ func Load() (Config, error) {
 		n = 1
 	}
 	return Config{
+		OpenSubtitlesKey: v.GetString("OPENSUBTITLES_API_KEY"), OpenSubtitlesToken: v.GetString("OPENSUBTITLES_TOKEN"),
 		SubtitleEditing: v.GetBool("JFE_SUBTITLE_EDITING"),
 		ImportRoot:      v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),
 		DatabaseURL: v.GetString("DATABASE_URL"), Listen: v.GetString("JFE_LISTEN"),

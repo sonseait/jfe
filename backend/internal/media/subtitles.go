@@ -94,25 +94,34 @@ func ParseSubtitles(content string) ([]Cue, error) {
 	return cues, nil
 }
 
-// SubtitlesSRT serializes stored plain-text cues for FFmpeg/libass playback.
-func SubtitlesSRT(cues []Cue) (string, error) {
+// SubtitlesASS serializes stored plain-text cues directly for libass playback.
+// Do not pass these through SRT: FFmpeg's SRT decoder preserves HTML entities.
+func SubtitlesASS(cues []Cue) (string, error) {
 	if len(cues) == 0 || len(cues) > 20000 {
 		return "", fmt.Errorf("invalid subtitle cues")
 	}
-	timestamp := func(seconds float64) string {
-		ms := int64(math.Round(seconds * 1000))
-		return fmt.Sprintf("%02d:%02d:%02d,%03d", ms/3600000, ms/60000%60, ms/1000%60, ms%1000)
+	timestamp := func(cs int64) string {
+		return fmt.Sprintf("%d:%02d:%02d.%02d", cs/360000, cs/6000%60, cs/100%60, cs%100)
 	}
 	var content strings.Builder
-	for i, cue := range cues {
+	content.WriteString("[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288\nScaledBorderAndShadow: yes\nYCbCr Matrix: None\n\n" +
+		"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n" +
+		"Style: Default,Arial,16,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1\n\n" +
+		"[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+	for _, cue := range cues {
 		if math.IsNaN(cue.Start) || math.IsNaN(cue.End) || math.IsInf(cue.Start, 0) || math.IsInf(cue.End, 0) || cue.Start < 0 || cue.End <= cue.Start || cue.End > 3600000 || len(cue.Text) > 8192 || !utf8.ValidString(cue.Text) || strings.ContainsRune(cue.Text, 0) {
 			return "", fmt.Errorf("invalid subtitle cue")
 		}
-		// Escape markup: uploaded cues are plain text, not SRT/ASS commands.
-		text := html.EscapeString(cue.Text)
-		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-		text = strings.Join(strings.FieldsFunc(text, func(r rune) bool { return r == '\n' }), "\n")
-		fmt.Fprintf(&content, "%d\n%s --> %s\n%s\n\n", i+1, timestamp(cue.Start), timestamp(cue.End), text)
+		text := strings.ReplaceAll(strings.ReplaceAll(cue.Text, "\r\n", "\n"), "\r", "\n")
+		// libass has no escape for a literal backslash. An invisible word joiner
+		// prevents user text such as \N or \h from becoming ASS controls.
+		// Escape braces too, so cue text cannot inject style/drawing commands.
+		text = strings.NewReplacer("\\", "\\\u2060", "{", "\\{", "}", "\\}", "\n", "\\N").Replace(text)
+		start, end := int64(math.Round(cue.Start*100)), int64(math.Round(cue.End*100))
+		if end <= start {
+			end = start + 1
+		}
+		fmt.Fprintf(&content, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", timestamp(start), timestamp(end), text)
 	}
 	return content.String(), nil
 }

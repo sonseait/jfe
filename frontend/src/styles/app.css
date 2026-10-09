@@ -4402,3 +4402,68 @@ body:has(.audio-dock) .app-content {
     height: 320px;
   }
 }
+
+/* Keep receiver transport usable in the persistent video and audio players. */
+.cast-player {
+  min-width: 0;
+}
+.player > .cast-player {
+  padding: 8px 30px 20px;
+}
+.player > .cast-player[data-active='false'] {
+  display: none;
+}
+.cast-action-wrapper {
+  display: inline-flex;
+}
+.cast-action {
+  width: auto;
+  min-height: 39px;
+  padding: 0 12px;
+  gap: 8px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cast-action > svg {
+  flex-shrink: 0;
+}
+.cast-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.cast-action:focus-visible,
+.cast-action-wrapper:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+.player-mini .cast-action {
+  width: auto;
+}
+.player-expanded > .cast-player[data-active='true'] {
+  width: min(600px, 100%);
+  margin: auto;
+}
+.audio-dock > .cast-player[data-active='true'] {
+  flex: 1;
+}
+@media (max-width: 760px) {
+  .audio-dock > .cast-player[data-active='true'] {
+    flex-basis: 100%;
+  }
+}
+
+.player:fullscreen:has(> .cast-player[data-active='true']) .player-top {
+  display: flex;
+}
+@media (max-width: 760px) {
+  .player-cast-action .cast-action-label {
+    display: none;
+  }
+  .player-cast-action .cast-action {
+    width: 39px;
+    padding: 0;
+  }
+}

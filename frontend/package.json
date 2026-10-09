@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@types/chromecast-caf-sender": "^1.0.11",
     "@types/node": "26.6.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

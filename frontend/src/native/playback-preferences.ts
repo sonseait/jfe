@@ -39,18 +39,11 @@ export function networkDownlink() {
 export function selectAutoQuality(
   file: DTO<'FileDTO'>,
   bytesPerSecond: number | null,
-  speed = 1,
 ): AutoQuality {
-  if (
-    !bytesPerSecond ||
-    !Number.isFinite(bytesPerSecond) ||
-    bytesPerSecond <= 0 ||
-    !Number.isFinite(speed) ||
-    speed <= 0
-  )
+  if (!bytesPerSecond || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0)
     return { maxHeight: 0, maxBitrate: 0 };
   // Keep headroom for audio, protocol overhead and short network fluctuations.
-  const budget = (bytesPerSecond * 8 * 0.65) / speed;
+  const budget = bytesPerSecond * 8 * 0.65;
   const sourceRate = file.duration > 0 && file.size > 0 ? (file.size * 8) / file.duration : 0;
   if (sourceRate > 0 && sourceRate <= budget) return { maxHeight: 0, maxBitrate: 0 };
   const bitrate = Math.min(
@@ -64,84 +57,94 @@ export function selectAutoQuality(
     maxBitrate: bitrate,
   };
 }
-export function createAutoQuality(initial: AutoQuality) {
-  let current = initial;
-  let direction = '';
-  let candidate = initial;
-  let count = 0;
-  let changedAt = -Infinity;
-  return {
-    sample(target: AutoQuality, now: number): AutoQuality | null {
-      if (target.maxHeight === current.maxHeight && target.maxBitrate === current.maxBitrate) {
-        direction = '';
-        count = 0;
-        return null;
-      }
-      const lower =
-        target.maxBitrate > 0 &&
-        (current.maxBitrate === 0 || target.maxBitrate < current.maxBitrate);
-      const nextDirection = lower ? 'lower' : 'higher';
-      if (direction !== nextDirection) {
-        count = 0;
-        candidate = target;
-      }
-      // Consecutive measurements may vary. Use their most conservative budget.
-      if (
-        candidate.maxBitrate === 0 ||
-        (target.maxBitrate > 0 && target.maxBitrate < candidate.maxBitrate)
-      )
-        candidate = target;
-      count++;
-      direction = nextDirection;
-      if (count < (lower ? 2 : 4) || now - changedAt < 30000) return null;
-      current = candidate;
-      changedAt = now;
-      count = 0;
-      direction = '';
-      return current;
-    },
-  };
-}
 
-// Native video does not expose in-flight download throughput. Measure a bounded
-// range through the existing authorized playback URL before loading the source.
-export async function measurePlaybackRate(
-  url: string,
-  signal: AbortSignal,
-): Promise<number | null> {
-  const abort = new AbortController();
-  const cancel = () => abort.abort();
-  signal.addEventListener('abort', cancel, { once: true });
-  if (signal.aborted) abort.abort();
-  const timer = window.setTimeout(cancel, 3000);
-  const started = performance.now();
-  let bytes = 0;
+export const SUBTITLE_FONTS = [
+  'Arial',
+  'Noto Sans',
+  'Noto Serif',
+  'Noto Sans Mono',
+  'Noto Sans CJK',
+  'DejaVu Sans',
+  'DejaVu Serif',
+  'DejaVu Sans Mono',
+  'Liberation Sans',
+  'Liberation Serif',
+  'Liberation Mono',
+] as const;
+export type FilmPreferences = {
+  audio?: string;
+  subtitle?: string;
+  quality?: string;
+  speed?: string;
+  volume?: number;
+  font?: string;
+  tracks?: string;
+};
+export function filmTrackSignature(file?: DTO<'FileDTO'>) {
+  return JSON.stringify(
+    file?.tracks.map(({ index, type, codec, language, title }) => ({
+      index,
+      type,
+      codec,
+      language,
+      title,
+    })) ?? [],
+  );
+}
+function filmPreferenceKey(userId: string, fileId: string) {
+  return `jfe.film-options.v1:${userId}:${fileId}`;
+}
+export function readFilmPreferences(
+  userId?: string,
+  fileId?: string,
+  tracks?: string,
+): FilmPreferences {
+  if (!userId || !fileId) return {};
   try {
-    const response = await fetch(url, {
-      headers: { Range: 'bytes=0-262143' },
-      cache: 'no-store',
-      signal: abort.signal,
-    });
-    if (response.status !== 206 || !response.body) {
-      await response.body?.cancel();
-      return null;
-    }
-    const reader = response.body.getReader();
-    try {
-      while (bytes < 262144) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        bytes += chunk.value.byteLength;
-      }
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
+    const value = JSON.parse(localStorage.getItem(filmPreferenceKey(userId, fileId)) ?? '{}');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return {
+      ...(value.tracks === tracks
+        ? {
+            audio:
+              typeof value.audio === 'string' && /^-?\d+$/.test(value.audio)
+                ? value.audio
+                : undefined,
+            subtitle: typeof value.subtitle === 'string' ? value.subtitle : undefined,
+          }
+        : {}),
+      quality: ['auto', '0', '720', '1080', '2160'].includes(value.quality)
+        ? value.quality
+        : undefined,
+      speed: ['0.75', '1', '1.25', '1.5', '2'].includes(value.speed) ? value.speed : undefined,
+      volume:
+        typeof value.volume === 'number' &&
+        Number.isFinite(value.volume) &&
+        value.volume >= 0 &&
+        value.volume <= 1
+          ? value.volume
+          : undefined,
+      font: SUBTITLE_FONTS.includes(value.font) ? value.font : undefined,
+      tracks: value.tracks,
+    };
   } catch {
-    // A timeout with partial data is still a useful conservative measurement.
-  } finally {
-    window.clearTimeout(timer);
-    signal.removeEventListener('abort', cancel);
+    return {};
   }
-  const elapsed = performance.now() - started;
-  return !signal.aborted && bytes > 0 && elapsed > 0 ? (bytes * 1000) / elapsed : null;
+}
+export function saveFilmPreferences(
+  userId: string | undefined,
+  fileId: string | undefined,
+  tracks: string,
+  patch: FilmPreferences,
+) {
+  if (!userId || !fileId) return;
+  try {
+    const old = readFilmPreferences(userId, fileId, tracks);
+    localStorage.setItem(
+      filmPreferenceKey(userId, fileId),
+      JSON.stringify({ ...old, ...patch, tracks }),
+    );
+  } catch {
+    /* Playback still works when browser storage is unavailable. */
+  }
 }

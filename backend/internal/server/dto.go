@@ -3,17 +3,18 @@ package server
 import "time"
 
 type Capabilities struct {
-	Transcoding bool `json:"transcoding"`
-	Movies      bool `json:"movies"`
-	Series      bool `json:"series"`
-	Music       bool `json:"music"`
-	Audio       bool `json:"audio"`
-	YouTube     bool `json:"youtube"`
-	MusicBrainz bool `json:"musicBrainz"`
-	Plugins     bool `json:"plugins"`
-	GPU         bool `json:"gpu"`
-	Metadata    bool `json:"metadata"`
-	Playback    bool `json:"playback"`
+	OpenSubtitles bool `json:"openSubtitles"`
+	Transcoding   bool `json:"transcoding"`
+	Movies        bool `json:"movies"`
+	Series        bool `json:"series"`
+	Music         bool `json:"music"`
+	Audio         bool `json:"audio"`
+	YouTube       bool `json:"youtube"`
+	MusicBrainz   bool `json:"musicBrainz"`
+	Plugins       bool `json:"plugins"`
+	GPU           bool `json:"gpu"`
+	Metadata      bool `json:"metadata"`
+	Playback      bool `json:"playback"`
 }
 type SystemDTO struct {
 	Name          string       `json:"name"`
@@ -101,6 +102,7 @@ type LibrariesDTO struct {
 	Items []LibraryDTO `json:"items"`
 }
 type CatalogQuery struct {
+	Sort      string `json:"sort,omitempty" jsonschema:"enum=watching,enum=title,enum=newest"`
 	Artist    string `json:"artist,omitempty" jsonschema:"maxLength=500"`
 	TopLevel  bool   `json:"topLevel,omitempty"`
 	PersonID  string `json:"personId,omitempty" jsonschema:"format=uuid"`
@@ -262,7 +264,7 @@ type EncodingDTO struct {
 	SubtitleSize              int     `json:"subtitleSize" jsonschema:"minimum=12,maximum=72"`
 	SubtitleOutline           float64 `json:"subtitleOutline" jsonschema:"minimum=0,maximum=10,multipleOf=0.5"`
 	SubtitleMargin            int     `json:"subtitleMargin" jsonschema:"minimum=0,maximum=200"`
-	SubtitleFont              string  `json:"subtitleFont" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Sans CJK"`
+	SubtitleFont              string  `json:"subtitleFont" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Serif,enum=Noto Sans Mono,enum=Noto Sans CJK,enum=DejaVu Sans,enum=DejaVu Serif,enum=DejaVu Sans Mono,enum=Liberation Sans,enum=Liberation Serif,enum=Liberation Mono"`
 	SubtitleColor             string  `json:"subtitleColor" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
 	SubtitleBackground        string  `json:"subtitleBackground" jsonschema:"pattern=^#[0-9A-Fa-f]{6}$"`
 	SubtitleBackgroundOpacity int     `json:"subtitleBackgroundOpacity" jsonschema:"minimum=0,maximum=100"`
@@ -298,6 +300,8 @@ type PlaybackDecisionDTO struct {
 	Reason         string       `json:"reason"`
 }
 type PlaybackRequest struct {
+	SubtitleFont   string                   `json:"subtitleFont,omitempty" jsonschema:"enum=Arial,enum=Noto Sans,enum=Noto Serif,enum=Noto Sans Mono,enum=Noto Sans CJK,enum=DejaVu Sans,enum=DejaVu Serif,enum=DejaVu Sans Mono,enum=Liberation Sans,enum=Liberation Serif,enum=Liberation Mono"`
+	Target         string                   `json:"target,omitempty" jsonschema:"enum=chromecast"`
 	SubtitleID     string                   `json:"subtitleId,omitempty" jsonschema:"format=uuid"`
 	Preview        bool                     `json:"preview,omitempty"`
 	Capabilities   *PlaybackCapabilitiesDTO `json:"capabilities,omitempty"`

@@ -3,8 +3,113 @@ import { adminStrings } from './admin';
 import { audioStrings } from './audio';
 import { initReactI18next } from 'react-i18next';
 const strings: Record<string, [string, string]> = {
+  'openSub.vietnamese': ['Vietnamese', 'Tiếng Việt'],
+  'openSub.english': ['English', 'Tiếng Anh'],
+  'openSub.search': ['Find on OpenSubtitles', 'Tìm trên OpenSubtitles'],
+  'openSub.help': [
+    'Choose a release matching your video. Downloads are personal and do not modify the original movie. Provider accounts have download quotas.',
+    'Chọn bản phát hành khớp với video. Phụ đề tải về dành riêng cho tài khoản của bạn, không sửa phim gốc. Tài khoản nhà cung cấp có giới hạn tải.',
+  ],
+  'openSub.automatic': [
+    'Use this movie or episode automatically',
+    'Tự tìm theo phim hoặc tập đang xem',
+  ],
+  'openSub.downloading': ['Downloading and preparing subtitles…', 'Đang tải và chuẩn bị phụ đề…'],
+  'openSub.downloadFailed': [
+    'Subtitle download failed. Check OpenSubtitles credentials, quota and scanner status.',
+    'Tải phụ đề thất bại. Kiểm tra thông tin OpenSubtitles, giới hạn tải và trạng thái scanner.',
+  ],
+  'openSub.searchFailed': [
+    'OpenSubtitles search failed. Check provider credentials and quota.',
+    'Không tìm được trên OpenSubtitles. Kiểm tra thông tin nhà cung cấp và giới hạn truy cập.',
+  ],
+  'openSub.empty': [
+    'No subtitles found. Try another title or language.',
+    'Không tìm thấy phụ đề. Thử tên phim hoặc ngôn ngữ khác.',
+  ],
+  'openSub.ready': ['Subtitles downloaded and selected', 'Đã tải và chọn phụ đề'],
+  'openSub.use': ['Download & use', 'Tải và sử dụng'],
+  'openSub.downloadCount': ['{{count}} downloads', '{{count}} lượt tải'],
+  'openSub.hearingImpaired': ['Hearing impaired', 'Hỗ trợ người khiếm thính'],
+  'native.job.subtitle_prepare': ['Subtitle preparation', 'Chuẩn bị phụ đề'],
+  'native.job.subtitle_download': ['OpenSubtitles download', 'Tải phụ đề OpenSubtitles'],
   ...adminStrings,
   ...audioStrings,
+  'cast.connect': ['Cast', 'Phát qua Chromecast'],
+  'cast.httpsRequired': [
+    'Open JFE over HTTPS to use Chromecast.',
+    'Mở JFE qua HTTPS để dùng Chromecast.',
+  ],
+  'cast.browserRequired': [
+    'Use a supported Chrome or Edge browser to cast. Google Cast Web Sender is unavailable on iOS.',
+    'Dùng Chrome hoặc Edge có hỗ trợ Cast. Google Cast Web Sender không khả dụng trên iOS.',
+  ],
+  'cast.sdkUnavailable': [
+    'Google Cast could not load. Check access to www.gstatic.com and reload the page.',
+    'Không tải được Google Cast. Kiểm tra truy cập www.gstatic.com và tải lại trang.',
+  ],
+  'cast.discovering': ['Loading Google Cast…', 'Đang tải Google Cast…'],
+  'cast.noDevices': [
+    'No Chromecast found. Check that the TV is on and on the same network, and allow local network access in your browser.',
+    'Chưa tìm thấy Chromecast. Kiểm tra TV đã bật, cùng mạng và trình duyệt được phép truy cập mạng cục bộ.',
+  ],
+  'cast.disconnect': ['Stop casting', 'Ngừng phát qua Chromecast'],
+  'cast.reconnecting': ['Reconnecting to {{device}}…', 'Đang kết nối lại với {{device}}…'],
+  'cast.chooseDevice': ['Select TV again', 'Chọn lại TV'],
+  'cast.reconnectFailed': [
+    'Automatic reconnection failed. Keep this page open and check the network, or select the TV again to resume from the last position.',
+    'Chưa thể tự kết nối lại. Giữ trang này mở và kiểm tra mạng, hoặc chọn lại TV để phát tiếp từ vị trí gần nhất.',
+  ],
+  'cast.statusUnavailable': [
+    'The TV is not responding with playback status. Reconnecting…',
+    'TV chưa phản hồi trạng thái phát. Đang kết nối lại…',
+  ],
+  'cast.inactiveInput': [
+    'The receiver reports that its TV input is inactive. Switch the TV to the Chromecast HDMI input.',
+    'Thiết bị báo đầu vào TV chưa được chọn. Chuyển TV sang cổng HDMI của Chromecast.',
+  ],
+  'cast.videoReceiverRequired': [
+    'This device has no video output. Select the TV or a video-capable Chromecast.',
+    'Thiết bị này không có đầu ra video. Chọn TV hoặc Chromecast có khả năng phát video.',
+  ],
+  'cast.preparing': ['Preparing video for {{device}}…', 'Đang chuẩn bị video cho {{device}}…'],
+  'cast.loadingReceiver': ['Loading video on {{device}}…', 'Đang tải video trên {{device}}…'],
+  'cast.prepareTimeout': [
+    'The server took too long to prepare the Cast stream.',
+    'Máy chủ chuẩn bị stream Cast quá lâu.',
+  ],
+  'cast.prepareFailed': [
+    'The server could not prepare the Cast stream. Check the transcoder worker.',
+    'Máy chủ chưa chuẩn bị được stream Cast. Kiểm tra worker transcoder.',
+  ],
+  'cast.receiverLoadFailed': [
+    'The TV could not load the video. Check that it can reach the JFE address with trusted HTTPS, without a proxy login page.',
+    'TV chưa tải được video. Kiểm tra TV truy cập được địa chỉ JFE qua HTTPS hợp lệ, không bị chặn bởi trang đăng nhập proxy.',
+  ],
+  'cast.errorCode': ['Error code: {{code}}', 'Mã lỗi: {{code}}'],
+  'cast.directPlayback': ['TV streams directly from the server', 'TV phát trực tiếp từ máy chủ'],
+  'cast.directHelp': [
+    'Use Cast in JFE to play directly on the TV. Casting a tab or screen from Chrome uses mirroring.',
+    'Dùng nút Cast trong JFE để phát trực tiếp trên TV. Truyền tab hoặc màn hình từ Chrome sử dụng mirroring.',
+  ],
+  'cast.receiverRequired': [
+    'Select a media receiver using Cast in JFE. Tab or screen mirroring is not supported.',
+    'Chọn thiết bị phát media bằng nút Cast trong JFE. Không hỗ trợ truyền tab hoặc màn hình.',
+  ],
+  'cast.mediaURL': ['Media URL sent to the TV', 'URL media gửi cho TV'],
+  'cast.mediaURLHelp': [
+    'This is the exact URL sent to the receiver, including a temporary playback token. It changes when playback is recreated. Keep it private.',
+    'Đây là URL đầy đủ gửi cho thiết bị Cast, chứa token phát tạm thời. URL thay đổi khi tạo lại phiên phát. Giữ URL này riêng tư.',
+  ],
+  'cast.controls': ['Chromecast controls', 'Điều khiển Chromecast'],
+  'cast.playingOn': ['Playing on {{device}}', 'Đang phát trên {{device}}'],
+  'cast.failed': [
+    'Unable to play on Chromecast. Check that the receiver can reach this server and that the media format is supported. Video conversion requires NVIDIA transcoding.',
+    'Không thể phát trên Chromecast. Kiểm tra thiết bị truy cập được máy chủ và hỗ trợ định dạng media. Chuyển mã video yêu cầu NVIDIA.',
+  ],
+  'catalogSort.watching': ['Watching first', 'Đang xem trước'],
+  'catalogSort.title': ['Title A–Z', 'Tên A–Z'],
+  'catalogSort.newest': ['Recently added', 'Mới thêm gần đây'],
   'playerQuality.auto': ['Auto (network speed)', 'Tự động (theo tốc độ mạng)'],
   'general.title': ['General settings', 'Cài đặt chung'],
   'general.liveHelp': [

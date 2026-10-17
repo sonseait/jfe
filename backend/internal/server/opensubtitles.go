@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/route"
 	"jfe/backend/internal/store"
 	"jfe/backend/internal/subtitleprovider"
@@ -27,7 +29,9 @@ type OpenSubtitleDTO struct {
 	HearingImpaired bool   `json:"hearingImpaired"`
 }
 type OpenSubtitlesDTO struct {
-	Items []OpenSubtitleDTO `json:"items"`
+	Items       []OpenSubtitleDTO `json:"items"`
+	SearchTitle string            `json:"searchTitle"`
+	SearchYear  int               `json:"searchYear"`
 }
 type OpenSubtitleRequest struct {
 	FileID int `json:"fileId" jsonschema:"minimum=1"`
@@ -75,37 +79,41 @@ func (s *Server) openSubtitleRoutes() {
 		if err != nil {
 			return out(v, err)
 		}
-		q := url.Values{"languages": {in.Query.Language}, "order_by": {"download_count"}, "order_direction": {"desc"}}
-		if in.Query.Search != "" {
-			q.Set("query", in.Query.Search)
-		} else if i.Kind == "episode" {
+		if i.Kind != "movie" && i.Kind != "episode" {
+			return out(v, route.Fail(422, "Subtitles require a movie or episode"))
+		}
+		target := subtitleprovider.SearchTarget{Title: i.Title, Year: int(i.Year), Kind: i.Kind, Season: int(i.Season), Episode: int(i.Episode)}
+		target.TMDBID, _ = strconv.Atoi(i.ProviderID)
+		if i.Kind == "episode" {
 			parent, err := s.DB.GetItem(ctx, i.ParentID)
 			if err != nil {
 				return out(v, err)
 			}
-			if parent.ProviderID != "" {
-				q.Set("parent_tmdb_id", parent.ProviderID)
-			} else {
-				q.Set("query", parent.Title)
-			}
-			q.Set("season_number", strconv.Itoa(int(i.Season)))
-			q.Set("episode_number", strconv.Itoa(int(i.Episode)))
-		} else if i.Kind == "movie" {
-			q.Set("type", "movie")
-			if i.ProviderID != "" {
-				q.Set("tmdb_id", i.ProviderID)
-			} else {
-				q.Set("query", i.Title)
-			}
-			if i.Year > 0 {
-				q.Set("year", strconv.Itoa(int(i.Year)))
-			}
-		} else {
-			return out(v, route.Fail(422, "Subtitles require a movie or episode"))
+			target.Title, target.Year = parent.Title, int(parent.Year)
+			target.TMDBID, _ = strconv.Atoi(parent.ProviderID)
 		}
-		items, err := (subtitleprovider.Client{Key: s.Config.OpenSubtitlesKey, Token: s.Config.OpenSubtitlesToken}).Search(ctx, q)
+		target = target.WithFilenameFallback(f.Path)
+		search := strings.TrimSpace(in.Query.Search)
+		if search == "" {
+			target = subtitleprovider.ResolveSearchTarget(ctx, s.Config.TMDBToken, target)
+		}
+		q := target.Query(in.Query.Language, search)
+		if q.Get("query") == "" {
+			return out(v, route.Fail(422, "A movie or series title is required for subtitle search"))
+		}
+		v.SearchTitle = q.Get("query")
+		v.SearchYear, _ = strconv.Atoi(q.Get("year"))
+		log.Ctx(ctx).Info().Str("subtitleSearchTitle", q.Get("query")).Str("subtitleSearchYear", q.Get("year")).Msg("Searching OpenSubtitles using resolved title")
+		var items []subtitleprovider.Candidate
+		err = subtitleprovider.Do(ctx, s.Pool, s.Config, func(ctx context.Context, client *subtitleprovider.Client) error {
+			var e error
+			items, e = client.Search(ctx, q)
+			return e
+		})
 		if err != nil {
-			return out(v, route.Fail(503, "OpenSubtitles search failed; check provider credentials and quota"))
+			// Preserve both the public HTTP problem and the original typed cause.
+			// The completion event must retain URL/timing diagnostics at error level.
+			return out(v, fmt.Errorf("%w: %w", route.Fail(503, "OpenSubtitles search failed; check provider credentials and quota"), err))
 		}
 		for _, m := range items {
 			v.Items = append(v.Items, OpenSubtitleDTO{m.FileID, m.Name, m.Language, m.Release, m.Downloads, m.HearingImpaired})
@@ -146,6 +154,9 @@ func (s *Server) openSubtitleRoutes() {
 			return out(v, err)
 		}
 		j, err := s.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "scanner", Kind: "subtitle_download", ResourceID: id, Payload: payload})
+		if err == nil {
+			logQueued(ctx, jobDTO(j))
+		}
 		return out(OpenSubtitleDownloadDTO{j.ID, id, j.State}, err)
 	})
 	route.Get(s.Routes, op("/files/:id/opensubtitles/jobs/:jobId", "getOpenSubtitleDownload", "user"), func(ctx context.Context, in route.Input[route.Empty, route.Empty, OpenSubtitleJobParams]) (route.Output[OpenSubtitleDownloadDTO], error) {

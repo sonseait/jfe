@@ -192,11 +192,15 @@ remains the accepted scope; this document tracks implementation.
 - Native admin encoding settings and English/Vietnamese UI.
 - Task history joins jobs to their movie/series/library and shows worker role,
   attempts, creation/activity timestamps, scan counts, cancellation requests and
-  job IDs for correlating worker logs. The page includes library schedules and
-  filters the latest 100 jobs; it is not a complete audit history.
+  job IDs for correlation. Library schedules are separate from the latest 100
+  jobs. Each execution/attempt has saved, paginated job-context events in
+  PostgreSQL, visible through an admin-only polling modal. Errors/stages are shown
+  directly on failed jobs. See [task history](task-history.md) for bounded storage,
+  crash behavior and deployment requirements.
 - User administration has searchable role-filtered account cards with explicit
   library access. Metadata editing separates local fields from TMDB matching.
-  Matching strips release filenames and ranks normalized/localized/original
+  Matching strips release filenames, removes Han prefixes from mixed Han/Latin
+  release names, and ranks normalized/localized/original
   titles with year agreement. If a non-English search has candidates but no
   recommended match, a second English search supplies matching aliases joined
   by TMDB ID. Candidates, display titles and overviews remain from the configured
@@ -240,6 +244,14 @@ method, route template and final HTTP status. The shared error handler covers
 typed routes, streaming failures and recovered panics; internal causes remain
 private in HTTP responses. System errors identify whether counting users,
 reading encoding settings or parsing those settings failed.
+
+Context loggers attach operation/user/validated resource IDs to API work and
+worker/job/resource metadata to background operations. Info records job lifecycle,
+scan progress, playback negotiation and FFmpeg readiness; debug records stage
+transitions and successful polling/stream requests. Error classification adds
+provider HTTP/network/JSON diagnostics, PostgreSQL SQLSTATE/constraint and process
+exit information without raw provider bodies or SQL values. See
+[backend logging](logging.md) for correlation, levels, redaction and field semantics.
 
 Video encoding modes are disabled (default) and nvidia. API negotiation rejects
 encoding while disabled, and the worker rechecks settings before starting FFmpeg.
@@ -625,27 +637,94 @@ video output. No URL or credential is logged.
 ## OpenSubtitles and playback choices
 
 The optional OpenSubtitles.com REST client uses a server-side API key and optional
-bearer token from the local Viper configuration. The public capability requires
+bearer token or username/password from the local Viper configuration. Credentials
+permit automatic login renewal; an explicit token takes precedence. The public capability requires
 API configuration and a recent scanner heartbeat advertising provider readiness;
 this describes configuration, not verified provider authentication. Typed,
 authorized per-file routes expose search, download enqueue and owner-scoped job
 status. Searches use TMDB IDs/year for movies and parent TMDB IDs plus season and
 episode for series, with optional title override and English/Vietnamese language.
 API responses contain explicit DTOs, never provider credentials or signed links.
+The movie/episode detail page owns the search/download modal, bound to the
+selected available video file and gated on provider/transcoding capabilities.
+Completion invalidates personal subtitle/source queries and saves the chosen
+subtitle in per-user/per-file playback preferences for the next playback.
+The player keeps subtitle selection, upload and timing controls; provider search
+is available on the detail page. Its search modal uses a responsive wide layout,
+wrapping long release names independently of fixed-width action buttons; narrow
+screens place each download action below its release details.
 
 Scanner `subtitle_download` jobs recheck file availability, account state and
 library access before download and publication. A stable personal subtitle ID
 (account, media file, provider file) plus a shared publication lock and conflict
 handling make retries idempotent and preserve existing edited cues. Provider HTTP
-calls have deadlines, bounded responses and sanitized errors. Downloads require
+calls have 10-second API/15-second file-download deadlines, bounded responses
+and sanitized errors. Provider operations have a 30-second context budget, with
+local gate/provider-lease acquisition capped together at five seconds. Failed calls
+include reproducible public API URLs and timing in nested diagnostics; signed file
+paths/queries and credentials remain redacted in stderr and saved job logs. Downloads require
 HTTPS OpenSubtitles domains, including redirects, without forwarding API credentials
 to file hosts. ZIP/gzip extraction stays in memory; archive entries are never
 written to paths from the provider. ZIP entry count and compressed size are bounded,
-with 512 KiB decompressed SRT/VTT and UTF-8/UTF-16 validation. The selected subtitle
+with 512 KiB decompressed SRT/VTT and UTF-8/UTF-16 validation. Parse failures
+retain structural reason, one-based line, parsed cue count and inferred content
+format/size in provider diagnostics without logging subtitle text. HTTP 200 does
+not imply that the response is a supported, valid subtitle document. The selected subtitle
 is stored in the existing owner-scoped uploaded-subtitle table. Original media
 stays unchanged, so this feature does not require original subtitle editing.
 Provider quotas/authentication failures use bounded job retries and the UI reports
 failure. Without configuration/worker capability, the frontend hides this action.
+File content validation failures do not impose provider-wide backoff. Network,
+authentication, rate and quota failures retain shared delays; a validation failure
+after consuming the last quota slot still persists the quota restriction.
+Manual jobs call `DownloadManual`, whose parser skips zero/negative-duration
+cues instead of rejecting the entire user-selected file. Valid cues remain
+subject to storage/playback bounds; files without usable cues still fail.
+Automatic downloads, uploads and subtitle synchronization retain strict parsing.
+Manual downloads do not verify temporal synchronization against the video.
+Provider coordination uses a fenced row lease on `subtitle_provider_state`
+(migration 00013), with a unique owner and database-clock expiry of 45 seconds.
+Conditional UPDATE acquires/reclaims the lease; state persistence requires a
+live matching owner and release only clears its own owner ID. Every callback
+receives Do's 30-second operation context rather than capturing an unbounded
+outer context. Cleanup uses independent bounded contexts. No connection,
+transaction or session advisory lock spans provider calls. A dead process or
+failed release therefore cannot retain provider ownership indefinitely, and
+connection pooling does not affect ownership. Lease wait logs identify the
+owner and expiry when available. Operations remain serialized. Stop old services
+before migrating and starting both updated services; mixed versions use different
+coordination mechanisms. Old advisory locks do not block the new code.
+
+Manual/default and automatic subtitle searches share a metadata title/year
+query builder. An optional five-second TMDB English-title lookup uses the known
+movie/series ID, caches names for six hours in a bounded 512-entry process cache,
+and falls back to a cleaned Latin filename title, then saved metadata on failure
+or missing configuration/ID. A conflicting filename year prevents that fallback.
+It does not change stored
+localized metadata or production year and runs before the provider lease.
+Episodes use parent-series names and season/episode coordinates without filtering
+on series debut year. No hash or release/source/group/provider-ID constraint is
+sent to OpenSubtitles. API responses include the effective searchTitle/searchYear,
+shown in the EN/VI modal. User overrides can also accept a cleaned filename.
+Automatic acceptance permits normalized title/year agreement without TMDB IDs;
+known conflicting IDs/years or episode coordinates are rejected. Matching IDs
+can corroborate localized aliases; episodes can match parent IDs or series titles.
+Candidates with unknown years need a filename year when metadata year is known.
+Non-hearing-impaired, popularity and provider file ID determine rank, with IDs
+deduplicated. At most three distinct files are tried per job attempt, advancing
+only for content errors and stopping on provider/network/quota errors or the
+operation deadline. First-page results remain bounded at 100 file candidates.
+Candidate counts, attempts, file IDs and effective search names/years are saved
+in job logs. This does not verify dialogue alignment.
+
+Automatic Vietnamese sidecars use separate admin-controlled library policies and
+the `JFE_SUBTITLE_DOWNLOADS` deployment flag. Scanner searches missing tracks after
+scan and daily, publishes `.vi.srt` files atomically without replacing existing
+destinations, and reconciles durable publication journals. API/transcoder retain
+read-only video mounts. Manual and automatic operations share a PostgreSQL provider
+lease and persisted quota/backoff state; no provider network request holds a
+database transaction. See [automatic subtitles](automatic-subtitles.md) for matching,
+lease/policy guards, preserved track timing, recovery and acceptance criteria.
 
 Player choices are saved in browser storage keyed by user ID and media file ID:
 audio/subtitle selection, quality, font, speed and volume. Track descriptors guard

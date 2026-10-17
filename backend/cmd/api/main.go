@@ -45,7 +45,7 @@ func run(args []string, output io.Writer) error {
 			return fmt.Errorf("%s", usage)
 		}
 	}
-	ctx, cancel, cfg, pool, err := rt.Start()
+	ctx, cancel, cfg, pool, err := rt.Start("api")
 	defer cancel()
 	if pool != nil {
 		defer pool.Close()

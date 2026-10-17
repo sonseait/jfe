@@ -4,6 +4,7 @@ import "time"
 
 type Capabilities struct {
 	OpenSubtitles bool `json:"openSubtitles"`
+	AutoSubtitles bool `json:"autoSubtitles"`
 	Transcoding   bool `json:"transcoding"`
 	Movies        bool `json:"movies"`
 	Series        bool `json:"series"`
@@ -89,6 +90,8 @@ type CastImageParams struct {
 	PersonID string `json:"personId" jsonschema:"format=uuid"`
 }
 type LibraryDTO struct {
+	AutoSubtitles     bool      `json:"autoSubtitles"`
+	MissingSubtitles  int64     `json:"missingSubtitles"`
 	FileCount         int64     `json:"fileCount"`
 	Scan              *JobDTO   `json:"scan,omitempty"`
 	ID                string    `json:"id"`
@@ -221,6 +224,8 @@ type MetadataRefreshRequest struct {
 	Mode string `json:"mode" jsonschema:"enum=replace,enum=missing"`
 }
 type JobDTO struct {
+	ErrorDetail     string    `json:"errorDetail"`
+	ErrorStage      string    `json:"errorStage"`
 	ResourceName    string    `json:"resourceName"`
 	ItemID          string    `json:"itemId"`
 	LibraryID       string    `json:"libraryId"`

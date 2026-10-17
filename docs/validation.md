@@ -1,5 +1,34 @@
 # Build and operational verification
 
+OpenSubtitles subtitle-parse diagnostics passed backend lint/four-binary builds.
+Parser validation rules are unchanged; structural reasons/line numbers are now
+preserved instead of replaced with a generic download error. The reported HTTP
+200/text/plain failure has not been reproduced because its subtitle payload is
+unavailable. No automated tests were added or run.
+
+OpenSubtitles search now retains its typed cause in the final error-level HTTP
+completion event while returning the same public 503 problem. Wait failures also
+identify local-session, pool or cross-process lock contention. Validation uses
+backend lint/four-binary builds; deployed contention and HTTP timeout causes have
+not been observed here. No automated tests were added or run.
+
+OpenSubtitles HTTP/operation/wait time budgets and safe failure URL diagnostics
+passed backend lint and four-binary builds. No API schema changed. Actual network
+stalls, proxy/DNS/TLS failures, provider lock contention and URL display in saved
+job history remain unverified on a deployed server. No automated tests were run.
+
+Moving OpenSubtitles search/download to movie/episode details passed frontend
+typecheck, lint and production build. No backend contract or migration changed.
+Live provider downloads, file-version switching and the remembered selection on
+actual playback remain unverified. No automated browser tests were run.
+
+Saved job history and the redesigned task dashboard use backend generation, lint
+and four-binary builds plus frontend contract generation, typecheck, lint and
+production build. Migration 00012 has not been applied to a live server here.
+Live job logs, retry/lease-loss presentation, PostgreSQL failure behavior and
+responsive UI layout remain unverified; see [task history](task-history.md).
+No automated test suites were added or run.
+
 Automated unit, integration, media fixture and browser testing was removed at the
 user's request on 2026-10-05. Test files, runners, test dependencies, Makefile test
 targets and CI test services/steps are no longer part of this repository.
@@ -22,6 +51,18 @@ CI regenerates contracts and checks for drift, then builds and lints both apps.
 A successful build is not evidence of real-device playback, GPU throughput,
 provider access or worker recovery. Runtime validation, authorization, path
 containment, leases and atomic publication remain product requirements.
+
+Contextual backend logging retains build/lint validation only. No automated suites
+were added or run. Actual provider HTTP responses, request/job correlation under
+load and deployed log collector formatting remain unverified; example events in
+[backend logging](logging.md) describe the format rather than a live diagnosis.
+
+Automatic OpenSubtitles sidecars add contract generation, backend lint/four-binary
+builds and frontend typecheck/lint/build validation only. No automated tests,
+fixtures or browser suites were added or run. Migration 00011, VIP login/renewal,
+provider matching/quota, writable mounts, crash recovery, permission races and
+real subtitle playback require deployed-server acceptance; see
+[automatic subtitle operational acceptance](automatic-subtitles.md#operational-acceptance).
 
 The deployed HDR command has shown NVIDIA decode/encode activity. The subsequent
 SDR CUDA decode/resize correction and pacing change have not yet been measured on
@@ -226,3 +267,164 @@ feature requires API configuration and deployment before use. Sampling may miss
 franchise context; provider identity checks do not establish franchise membership
 or the accuracy of generated reasons. Unknown/misidentified catalog titles remain
 a duplicate-detection limitation.
+
+OpenSubtitles file validation errors no longer start shared provider backoff;
+network/HTTP delays remain and exhausted quota still persists after an invalid
+last download. `make -C backend lint build` passed. No automated tests were run.
+Live provider behavior and existing persisted backoff expiry remain unverified.
+
+A user-requested live OpenSubtitles check on 2026-10-17 loaded backend/.env
+through the application config loader and called the existing provider client
+directly (without the database/session gate, HTTP routes or scanner jobs). Login
+and account lookup succeeded with VIP and the VIP API host. Searching Vietnamese
+subtitles using `雪国列车.Snowpiercer.2013.2160p.WEB-DL.H265.HQ.60fps.DDP5.1-HHWEB.mkv`
+returned 50 candidate files, including unrelated movie IDs; none passed the
+existing automatic release selection for movie TMDB 110415, year 2013, without
+a local movie hash. A single download of provider file 5240377 (the BluRay
+DTS x264-LOST Vietnamese release) returned HTTP 200, but the existing parser
+rejected the decoded 85,423-byte SRT-like payload at line 91 with
+`non_positive_cue_duration` after 19 cues. This reproduces a content-validation
+failure, not a timeout or authentication failure. It does not establish timing
+compatibility with the user's WEB-DL/60fps video. No subtitle was published or
+original media changed; the temporary diagnostic program was removed.
+
+A subsequent user-requested live check exercised the exact `Client.Download`
+method used by manual-download scanner jobs with two additional Snowpiercer
+Vietnamese provider files. File 10830772 (CiNEPHiLES UHD Blu-ray Remux) succeeded
+in 1,684 ms with 1,118 cues; JSON serialization for personal subtitle storage
+and ASS serialization for playback also succeeded. File 4563254 (YIFY) failed
+with HTTP 200 / `non_positive_cue_duration` at line 91 after 19 cues (85,127
+decoded bytes), reproducing the previously supplied provider request ID
+`c43b40c2-a37b-499f-93f5-cedc50298475`. This check used existing credentials
+and consumed two download slots. It did not exercise UI/job creation/database
+publication and made no media changes. The temporary diagnostic program was
+removed; no automated test suite was added or run.
+
+Manual download duration tolerance was verified live on 2026-10-17 using the
+new `DownloadManual` method wired into manual scanner jobs. The same YIFY
+provider file 4563254 that previously failed at line 91 now downloads and
+parses successfully: 1,154 usable cues, 93,597 JSON bytes, valid ASS serialization,
+963 ms download/parse duration. Individual non-positive-duration cues are
+skipped; strict parsing remains for automatic downloads and existing uploads/
+sync. `make -C backend lint build` passed. The diagnostic used the existing
+provider credentials, consumed one download slot and was removed afterwards.
+No automated test suite was added or run. UI/database publication and temporal
+synchronization with the user's actual video remain unverified.
+
+Provider-lock lifecycle hardening closes the underlying connection before pool
+release on every operation, even after explicit unlock, to avoid retaining
+reentrant session advisory locks. Timeout diagnostics use a generated sqlc
+query over pg_lock_status()/pg_stat_get_activity() for the holder PID/state,
+with an independent one-second best-effort budget; debug events carry the
+owner PID and held duration. `make -C backend generate` and
+`make -C backend lint build` passed. No automated tests were run. A temporary
+read-only diagnostic could not connect to DATABASE_URL from this environment,
+so live lock ownership, statistics visibility, cleanup and the cause of the
+reported lock wait remain unverified. No database session was terminated.
+Existing provider operations remain serialized; parallelization is not part
+of this lock-lifecycle change. The diagnostic program was removed.
+
+A user-requested read-only database investigation on 2026-10-17 successfully
+connected using backend/.env and inspected job
+`e579c52e-7d55-4c30-8772-8a8dbf4639d2`. The subtitle_download job had failed all
+three attempts on provider_lock waits; each saved event identified PostgreSQL
+PID 6395. At 17:18:32 UTC that same PID still held advisory key 7311908, was
+idle/ClientRead, and had last changed state at 17:16:53 UTC. No provider jobs
+were pending/running. Provider state remained connected/VIP with 996 downloads
+remaining, excluding quota backoff as this job's recorded cause. The holder
+application name was empty and its client connection used a local Unix socket;
+these observations do not identify the owning application or why the lock
+remained held. No connection was terminated and no job/state was modified.
+The temporary diagnostic program was removed.
+
+A follow-up read-only inspection at 17:21:11 UTC still found the exact same
+PID 6395 with backend_start 16:55:36 UTC and state_change 17:16:53 UTC holding
+key 7311908. It was a local Unix-socket client backend, idle, and its last
+statement was ROLLBACK. Thus this observation establishes continued ownership
+by the original session, not release followed by reacquisition. Session advisory
+locks survive ROLLBACK. Six successive queries on the diagnostic connection
+reported one stable server PID; transaction-pool/proxy involvement remains
+unconfirmed. No backend was terminated, no lock was acquired, and the temporary
+diagnostic program was removed.
+
+Provider session locks were replaced with expiring row leases in migration
+00013_subtitle_provider_lease. A single conditional UPDATE claims a unique
+owner for 45 seconds using the database clock; expired owners cannot save
+provider state or release a replacement lease. Cleanup releases by owner ID
+and runs even if the acquisition reply was lost. No connection/transaction
+is held over provider HTTP calls. All four Do callbacks now receive and use
+the operation's bounded context, fixing the prior capture of outer contexts
+that bypassed the advertised total 30-second deadline. Saved logs allow the
+new lease ID/expiry/held duration fields and typed wait diagnostics identify
+the active owner/expiry when available. `make -C backend generate` and
+`make -C backend lint build` passed; no automated tests were added or run.
+The new migration has not been applied to the live database and updated
+services have not been deployed; crash recovery, lease reclamation and live
+request behavior remain unverified. Stop old API/scanner versions, migrate
+through 00013 with the external migrate CLI, then start both updated services
+together. Existing advisory locks are not used by new code, but mixed old/new
+versions must not run concurrently. This change hardens provider liveness
+without claiming to establish the exact origin of the earlier idle session.
+
+The OpenSubtitles detail-page modal now has a responsive maximum width of
+1,100 px, a block ScrollArea content container, wrapping release details and
+a minmax(0,1fr)/max-content result grid. Download buttons keep their natural
+width; below 640 px they move below the details. Automatic matching now ranks
+correctly identified releases across source/group differences, retains hash
+priority and conflicting-ID/year/episode rejection, deduplicates provider file
+IDs after ranking and attempts up to three files per job attempt. Only invalid
+subtitle content advances to another file; shared provider/network errors, quota
+and the total context deadline stop early. A supplemental no-hash search can
+fill a short candidate list. Saved logs expose counts, file IDs and attempts.
+The automatic scheduling error path preserves its daily retry time when a file
+validation error has no provider-level retry time. Accepted matching policy was
+updated in PLAN.md, with EN/VI library-policy help and README/architecture docs.
+`make -C backend lint build` and `make -C frontend check build` passed; targeted
+frontend formatting checks and `git diff --check` passed. No automated tests
+were added or run. Actual modal rendering on desktop/mobile, live candidate
+fallback/quota behavior, sidecar publication and synchronization of different
+releases with real video remain unverified. No live provider downloads or
+production database changes were performed for this change.
+
+Subtitle search now uses shared metadata title/year query construction for
+manual/default and automatic searches. Optional TMDB English-title resolution
+uses a known movie/series ID, a five-second lookup context and a bounded
+six-hour in-memory name cache. Known years are preserved; movies use title/year
+and episodes use series title plus season/episode coordinates. Hash/source/
+group/ID search constraints and video hashing were removed. Automatic matching
+accepts normalized title/year agreement without requiring IDs while rejecting
+known contradictions; three-file content fallback remains. Mixed Han/Latin
+filename cleaning is shared with scanner/TMDB identification; original paths
+and stored localized metadata are not renamed, and Han-only title hints remain
+available. The manual modal displays the effective searchTitle/searchYear
+returned by the API with EN/VI labels and updated automatic-policy help.
+Backend contracts were generated via `make -C backend generate`, followed by
+`make -C frontend generate`. Backend lint/build, frontend check/build, targeted
+Prettier checks and diff whitespace checks passed. No automated test suites
+were added or run.
+
+A manual live check parsed the supplied Chinese-tracker filename as Snowpiercer
+(2013), resolved a Vietnamese title hint and known TMDB 110415 to the English
+Snowpiercer title, then searched OpenSubtitles by title/year without hash/ID
+filters. VIP login succeeded; seven candidates were returned and all seven
+passed identity/year acceptance. Ranked first were provider files 4563254,
+5240377 and 5240395. No provider file was downloaded and no database state or
+media was modified. A preceding attempt to inspect the live catalog file could
+not complete within its context deadline, so the successful check used a known
+TMDB ID/title hint rather than claiming to read that item's current metadata.
+The temporary diagnostic program was removed. Scanner publication, actual UI
+rendering, cache expiry and complete worker/API routing remain unverified live.
+
+### Subtitle search fallback correction (2026-10-17)
+
+Manual and automatic searches now prepare a cleaned filename fallback even when
+localized metadata already has a title. TMDB English titles still take priority;
+missing credentials/ID or lookup failure retain the Latin filename title before
+the localized metadata title. Saved years remain authoritative and conflicting
+filename years prevent filename fallback. Explicit user search text is preserved.
+`make -C backend lint build` and `git diff --check` passed. A temporary manual
+diagnostic confirmed the supplied mixed Han/Latin filename plus Vietnamese
+metadata produces `query=Snowpiercer&year=2013` without a TMDB token, both with
+and without a known TMDB ID; it also confirmed conflicting years retain metadata.
+The diagnostic was removed. No automated suites were added or run; deployed
+API/scanner behavior and modal rendering have not been verified live.

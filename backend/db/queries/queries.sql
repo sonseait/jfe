@@ -123,8 +123,8 @@ WITH candidate AS (SELECT j.id FROM jobs j WHERE j.role=$1 AND next_attempt_at<=
 UPDATE jobs SET state='running',progress=0,total_files=0,processed_files=0,attempts=attempts+1,lease_id=$2,lease_until=now()+interval '30 seconds',updated_at=now() FROM candidate WHERE jobs.id=candidate.id RETURNING jobs.*;
 -- name: RenewJob :one
 UPDATE jobs SET lease_until=now()+interval '30 seconds',updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running' AND NOT cancel_requested RETURNING id;
--- name: FinishJob :exec
-UPDATE jobs SET state=$3,error=$4,next_attempt_at=CASE WHEN $3='pending' THEN now()+least(300,10*attempts*attempts)*interval '1 second' ELSE next_attempt_at END,progress=CASE WHEN $3='completed' THEN 100 ELSE progress END,updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running';
+-- name: FinishJob :one
+UPDATE jobs SET state=$3,error=$4,next_attempt_at=CASE WHEN $3='pending' THEN now()+least(300,10*attempts*attempts)*interval '1 second' ELSE next_attempt_at END,progress=CASE WHEN $3='completed' THEN 100 ELSE progress END,updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running' RETURNING id;
 -- name: CancelJob :exec
 UPDATE jobs SET cancel_requested=true,state=CASE WHEN state='pending' THEN 'cancelled' ELSE state END WHERE id=$1 AND state IN ('pending','running');
 -- name: ListJobs :many
@@ -132,16 +132,20 @@ SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100;
 -- name: ListJobDetails :many
 SELECT sqlc.embed(j), COALESCE(l.name, i.title, pi.title, si.title, '')::text AS resource_name,
  COALESCE(i.id, pi.id, si.id, '')::text AS item_id,
- COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id
+ COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id,
+ COALESCE(failure.event->>'error', '')::text AS error_detail,
+ COALESCE(failure.event->>'stage', '')::text AS error_stage
 FROM jobs j
+LEFT JOIN LATERAL (SELECT id FROM job_runs WHERE job_id=j.id ORDER BY attempt DESC LIMIT 1) run ON true
+LEFT JOIN LATERAL (SELECT event FROM job_logs WHERE run_id=run.id AND event ? 'error' ORDER BY id DESC LIMIT 1) failure ON true
 LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
-LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare') AND sf.id=j.resource_id)
+LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare','subtitle_auto') AND sf.id=j.resource_id)
  OR (j.kind='subtitle_download' AND sf.id=j.payload->>'fileId')
 LEFT JOIN items si ON si.id=sf.item_id
-ORDER BY j.created_at DESC LIMIT 100;
+ORDER BY j.created_at DESC, j.id DESC LIMIT 100;
 -- name: Heartbeat :exec
 INSERT INTO workers(id,role) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now();
 -- name: ListWorkers :many

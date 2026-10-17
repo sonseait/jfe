@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"jfe/backend/internal/audio"
+	"jfe/backend/internal/media"
 	"jfe/backend/internal/store"
 	"jfe/backend/internal/subtitleprovider"
 )
@@ -66,7 +67,14 @@ func (w *Worker) downloadSubtitle(ctx context.Context, j store.Job) error {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	name, cues, err := (subtitleprovider.Client{Key: w.Config.OpenSubtitlesKey, Token: w.Config.OpenSubtitlesToken}).Download(ctx, p.ProviderFileID)
+	jobStage(ctx, "download_personal_subtitle")
+	var name string
+	var cues []media.Cue
+	err = subtitleprovider.Do(ctx, w.Pool, w.Config, func(ctx context.Context, client *subtitleprovider.Client) error {
+		var e error
+		name, cues, e = client.DownloadManual(ctx, p.ProviderFileID)
+		return e
+	})
 	if err != nil {
 		return err
 	}
@@ -77,6 +85,7 @@ func (w *Worker) downloadSubtitle(ctx context.Context, j store.Job) error {
 	if err != nil {
 		return err
 	}
+	jobStage(ctx, "save_personal_subtitle")
 	_, err = w.DB.SaveDownloadedSubtitle(ctx, store.SaveDownloadedSubtitleParams{ID: j.ResourceID, FileID: p.FileID, UserID: p.UserID, Name: name, Cues: data})
 	return err
 }

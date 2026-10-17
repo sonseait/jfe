@@ -20,6 +20,9 @@ Create the initial administrator, add libraries and scan your media.
 TMDB metadata is optional. API documentation is served at :8090/docs and
 /openapi.json. The documentation viewer loads Scalar from a CDN.
 
+Mixed Chinese/Latin release filenames use the Latin name for metadata search;
+for example `雪国列车.Snowpiercer.2013.…mkv` yields Snowpiercer (2013). Original
+files are not renamed; Han-only names remain available when there is no Latin name.
 When Vietnamese metadata cannot confidently match an English release filename,
 identification also compares English titles for the same TMDB candidates. Display
 titles, descriptions and fetched metadata remain in the configured language.
@@ -90,6 +93,16 @@ override file values; a missing `.env` is allowed for container deployments.
 Logging defaults to `JFE_LOG_LEVEL=info` and `JFE_LOG_FORMAT=json` on stderr.
 Set `JFE_LOG_LEVEL=debug` for verbose logging or `JFE_LOG_FORMAT=console` for
 human-readable development output. These settings apply to all four binaries.
+Info logs include worker/job lifecycles, resource names and IDs, scan progress,
+playback decisions and stream startup. Errors include the processing stage and
+typed provider/database/process diagnostics. Successful polling and media-segment
+requests use debug to keep operational logs readable. Correlate API and worker
+events through `requestId`, `jobId` and `playbackId`; duration fields ending in
+`Ms` use milliseconds. See [backend logging](docs/logging.md) for fields and examples.
+Admin → Tasks shows library schedules and saved logs for each execution/attempt,
+with live polling, stage/error details and older log pages. Apply migration
+`00012_job_history` before updating API and workers. Earlier executions have no
+retroactive logs. See [task history](docs/task-history.md) for limits and storage.
 The API listens on :8090; Vite proxies API
 requests to it. JFE_API_PROXY overrides the development proxy target.
 
@@ -259,7 +272,7 @@ to PATH for `yt-dlp`; downloader also needs Node.js 20+ and FFmpeg/ffprobe.
 The Docker image packages these dependencies. `JFE_IMPORT_ROOT` enables a dedicated
 import directory; leaving it empty disables YouTube imports.
 
-Video libraries remain read-only for API/transcoder; scanner also stays read-only unless original subtitle editing is explicitly enabled. Mount **audio libraries read-write for scanner**
+Video libraries remain read-only for API/transcoder; scanner also stays read-only unless original subtitle editing or automatic sidecar creation is explicitly enabled. Mount **audio libraries read-write for scanner**
 and read-only for API/transcoder. Mount **the import directory read-write for both
 scanner and downloader**, read-only for API/transcoder, at the same absolute path.
 Share PostgreSQL and the cache directory among all four processes. Ensure the
@@ -478,20 +491,82 @@ replaced when a retry creates a new stream and is never logged. Keep the URL pri
 ## OpenSubtitles and remembered movie options
 
 Configure `OPENSUBTITLES_API_KEY` on both API and scanner. Set
-`OPENSUBTITLES_TOKEN` too when your OpenSubtitles.com account requires authenticated
-downloads; renew expired tokens in the deployment configuration. A configured,
-healthy scanner enables the player’s **Find on OpenSubtitles** action under
-**Subtitles** when NVIDIA subtitle playback is enabled. Credentials stay on the
-server. Provider download quotas still apply.
+`OPENSUBTITLES_USERNAME` and `OPENSUBTITLES_PASSWORD` for account/VIP downloads;
+leave `OPENSUBTITLES_TOKEN` empty to let JFE log in and renew expired sessions.
+An explicitly configured token takes precedence and must be renewed in the
+deployment configuration. A configured,
+healthy scanner enables **Find on OpenSubtitles** on movie/episode detail pages
+when NVIDIA subtitle playback is enabled. Select the video version first when
+multiple files are available. Credentials stay on the
+server. Provider download quotas still apply. API requests time out after 10
+seconds and file downloads after 15 seconds; provider-lock waits stop after five
+seconds. Failed calls log the public API URL (including safe search parameters),
+request duration and timeout budget. Signed file URLs remain redacted. See
+[backend logging](docs/logging.md#opensubtitles-time-budgets).
+Provider coordination uses a 45-second expiring database lease, not a PostgreSQL
+session lock. Timeouts log the lease owner ID and expiry when available. Apply
+migration `00013_subtitle_provider_lease` with `make -C backend migrate` before
+starting the updated API/scanner. Stop the old API/scanner before switching to
+the new coordination mechanism; do not run old and new versions together. Old
+advisory locks do not block the updated code.
+Malformed subtitle files fail their download without starting a shared provider
+backoff; network, authentication and provider rate/quota delays still apply.
 
 Search in Vietnamese or English using the identified movie/episode, or enter
-another title. **Download & use** queues a scanner job that downloads the selected
+another title. Default searches use the title/year saved in metadata, preferring
+a cached English title from TMDB when available. If that lookup is unavailable,
+the cleaned Latin filename title takes precedence over the localized metadata
+title, provided its year does not conflict. For example, the mixed Chinese/English
+Snowpiercer filename searches for `Snowpiercer` (2013). Series use their title and
+season/episode numbers. The dialog shows the effective search title/year.
+The wide search dialog wraps long release names and keeps download
+actions readable on desktop and mobile. **Download subtitles** queues a scanner job that downloads the selected
 provider file, expands ZIP/gzip in memory when needed, validates UTF-8/UTF-16 SRT
-or WebVTT (512 KiB text limit), and saves personal subtitle cues. The player selects
-it when the job completes. No original movie or sidecar is modified; downloaded
+or WebVTT (512 KiB text limit), and saves personal subtitle cues. A manually
+selected download tolerates individual zero/negative-duration cues
+by skipping them; other valid cues are retained without checking synchronization
+against the video. A file with no usable cues still fails. Completion
+refreshes the personal subtitle list and remembers the selection for the next
+playback of that file. No original movie or sidecar is modified; downloaded
 subtitles use the existing personal timing/editor/deletion controls. Repeated
 requests for the same provider file reuse the stored personal subtitle without
 replacing any personal edits.
+
+### Automatic Vietnamese subtitles
+
+Apply migration `00011_automatic_subtitles` with `make -C backend migrate` before
+deploying API/scanner/frontend together. Configure the same OpenSubtitles.com
+**API key** and account credentials on API and scanner; a VIP account does not
+replace the application API key. Set `JFE_SUBTITLE_DOWNLOADS=true` on both services
+and give scanner write access to the selected video directories. API/transcoder
+retain read-only video mounts. This flag permits new sidecars only; changing or
+deleting originals still requires the separate `JFE_SUBTITLE_EDITING` flag.
+
+In **Admin → General**, check account connection, VIP status and provider quota.
+In **Admin → Libraries**, enable automatic Vietnamese subtitles on each chosen
+movie/series library. Existing indexed files are included, new files are considered
+after scanning, and missing subtitles are searched again every 24 hours. The
+library's **Subtitle status** dialog lists results, the next attempt and a
+**Find missing subtitles now** action. Playback does not need to be open.
+
+Scanner saves `<video-basename>.vi.srt` beside the video for all users with library
+access. Vietnamese embedded tracks (including bitmap tracks) or existing sidecars
+count as complete; personal uploads do not. Existing destinations are never
+replaced. Search and matching use saved movie titles/years (English from TMDB
+when available), or series titles and season/episode numbers. TMDB IDs are not
+required; known conflicting IDs/years/episode coordinates are rejected. Hashes,
+release sources and groups are not required or used to rank results. Up to three
+distinct files are tried per job attempt if subtitle content is invalid, bounded
+by the 30-second provider operation deadline and quota. Different releases may
+need timing adjustment; the scanner does not measure dialogue alignment.
+Downloads are independent of NVIDIA mode;
+subtitle playback retains the existing NVENC requirements.
+
+Provider operations are serialized across API/scanner, including manual downloads.
+VIP accounts still obey provider quotas and retry/reset times. Removing or disabling
+a library never deletes its downloaded subtitles. Existing track timing is retained
+when adding a sidecar. See [automatic subtitle architecture](docs/automatic-subtitles.md)
+for publication, recovery and operational acceptance checks.
 
 The browser player remembers audio/subtitle selections (including Off), quality,
 font, volume and speed per signed-in account and media file on this browser.

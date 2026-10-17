@@ -237,7 +237,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const dueLibraries = `-- name: DueLibraries :many
-SELECT id, name, kind, paths, scan_interval_hours, last_scan_at FROM libraries WHERE scan_interval_hours>0 AND last_scan_at+scan_interval_hours*interval '1 hour'<now()
+SELECT id, name, kind, paths, scan_interval_hours, last_scan_at, auto_subtitles FROM libraries WHERE scan_interval_hours>0 AND last_scan_at+scan_interval_hours*interval '1 hour'<now()
 `
 
 func (q *Queries) DueLibraries(ctx context.Context) ([]Library, error) {
@@ -256,6 +256,7 @@ func (q *Queries) DueLibraries(ctx context.Context) ([]Library, error) {
 			&i.Paths,
 			&i.ScanIntervalHours,
 			&i.LastScanAt,
+			&i.AutoSubtitles,
 		); err != nil {
 			return nil, err
 		}
@@ -353,8 +354,8 @@ func (q *Queries) FileByPath(ctx context.Context, arg FileByPathParams) (MediaFi
 	return i, err
 }
 
-const finishJob = `-- name: FinishJob :exec
-UPDATE jobs SET state=$3,error=$4,next_attempt_at=CASE WHEN $3='pending' THEN now()+least(300,10*attempts*attempts)*interval '1 second' ELSE next_attempt_at END,progress=CASE WHEN $3='completed' THEN 100 ELSE progress END,updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running'
+const finishJob = `-- name: FinishJob :one
+UPDATE jobs SET state=$3,error=$4,next_attempt_at=CASE WHEN $3='pending' THEN now()+least(300,10*attempts*attempts)*interval '1 second' ELSE next_attempt_at END,progress=CASE WHEN $3='completed' THEN 100 ELSE progress END,updated_at=now() WHERE id=$1 AND lease_id=$2 AND state='running' RETURNING id
 `
 
 type FinishJobParams struct {
@@ -364,14 +365,16 @@ type FinishJobParams struct {
 	Error   string
 }
 
-func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) error {
-	_, err := q.db.Exec(ctx, finishJob,
+func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (string, error) {
+	row := q.db.QueryRow(ctx, finishJob,
 		arg.ID,
 		arg.LeaseID,
 		arg.State,
 		arg.Error,
 	)
-	return err
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getFile = `-- name: GetFile :one
@@ -422,7 +425,7 @@ func (q *Queries) GetItem(ctx context.Context, id string) (Item, error) {
 }
 
 const getLibrary = `-- name: GetLibrary :one
-SELECT id, name, kind, paths, scan_interval_hours, last_scan_at FROM libraries WHERE id=$1
+SELECT id, name, kind, paths, scan_interval_hours, last_scan_at, auto_subtitles FROM libraries WHERE id=$1
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id string) (Library, error) {
@@ -435,6 +438,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id string) (Library, error) {
 		&i.Paths,
 		&i.ScanIntervalHours,
 		&i.LastScanAt,
+		&i.AutoSubtitles,
 	)
 	return i, err
 }
@@ -781,16 +785,20 @@ func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]Item, e
 const listJobDetails = `-- name: ListJobDetails :many
 SELECT j.id, j.role, j.kind, j.resource_id, j.state, j.payload, j.error, j.progress, j.attempts, j.lease_id, j.lease_until, j.cancel_requested, j.created_at, j.updated_at, j.total_files, j.processed_files, j.next_attempt_at, COALESCE(l.name, i.title, pi.title, si.title, '')::text AS resource_name,
  COALESCE(i.id, pi.id, si.id, '')::text AS item_id,
- COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id
+ COALESCE(l.id, i.library_id, pi.library_id, si.library_id, '')::text AS library_id,
+ COALESCE(failure.event->>'error', '')::text AS error_detail,
+ COALESCE(failure.event->>'stage', '')::text AS error_stage
 FROM jobs j
+LEFT JOIN LATERAL (SELECT id FROM job_runs WHERE job_id=j.id ORDER BY attempt DESC LIMIT 1) run ON true
+LEFT JOIN LATERAL (SELECT event FROM job_logs WHERE run_id=run.id AND event ? 'error' ORDER BY id DESC LIMIT 1) failure ON true
 LEFT JOIN libraries l ON j.kind='scan' AND l.id=j.resource_id
 LEFT JOIN items i ON j.kind='metadata' AND i.id=j.resource_id
 LEFT JOIN playback_sessions p ON j.kind='playback' AND p.id=j.resource_id
 LEFT JOIN items pi ON pi.id=p.item_id
-LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare') AND sf.id=j.resource_id)
+LEFT JOIN media_files sf ON (j.kind IN ('subtitle_sync','subtitle_prepare','subtitle_auto') AND sf.id=j.resource_id)
  OR (j.kind='subtitle_download' AND sf.id=j.payload->>'fileId')
 LEFT JOIN items si ON si.id=sf.item_id
-ORDER BY j.created_at DESC LIMIT 100
+ORDER BY j.created_at DESC, j.id DESC LIMIT 100
 `
 
 type ListJobDetailsRow struct {
@@ -798,6 +806,8 @@ type ListJobDetailsRow struct {
 	ResourceName string
 	ItemID       string
 	LibraryID    string
+	ErrorDetail  string
+	ErrorStage   string
 }
 
 func (q *Queries) ListJobDetails(ctx context.Context) ([]ListJobDetailsRow, error) {
@@ -830,6 +840,8 @@ func (q *Queries) ListJobDetails(ctx context.Context) ([]ListJobDetailsRow, erro
 			&i.ResourceName,
 			&i.ItemID,
 			&i.LibraryID,
+			&i.ErrorDetail,
+			&i.ErrorStage,
 		); err != nil {
 			return nil, err
 		}
@@ -884,7 +896,7 @@ func (q *Queries) ListJobs(ctx context.Context) ([]Job, error) {
 }
 
 const listLibraries = `-- name: ListLibraries :many
-SELECT l.id, l.name, l.kind, l.paths, l.scan_interval_hours, l.last_scan_at FROM libraries l WHERE $1::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=l.id AND a.user_id=$2::text) ORDER BY name
+SELECT l.id, l.name, l.kind, l.paths, l.scan_interval_hours, l.last_scan_at, l.auto_subtitles FROM libraries l WHERE $1::boolean OR EXISTS(SELECT 1 FROM library_access a WHERE a.library_id=l.id AND a.user_id=$2::text) ORDER BY name
 `
 
 type ListLibrariesParams struct {
@@ -908,6 +920,7 @@ func (q *Queries) ListLibraries(ctx context.Context, arg ListLibrariesParams) ([
 			&i.Paths,
 			&i.ScanIntervalHours,
 			&i.LastScanAt,
+			&i.AutoSubtitles,
 		); err != nil {
 			return nil, err
 		}
@@ -1156,7 +1169,7 @@ func (q *Queries) SaveFile(ctx context.Context, arg SaveFileParams) error {
 }
 
 const saveLibrary = `-- name: SaveLibrary :one
-INSERT INTO libraries(id,name,kind,paths,scan_interval_hours) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,paths=excluded.paths,scan_interval_hours=excluded.scan_interval_hours RETURNING id, name, kind, paths, scan_interval_hours, last_scan_at
+INSERT INTO libraries(id,name,kind,paths,scan_interval_hours) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,paths=excluded.paths,scan_interval_hours=excluded.scan_interval_hours RETURNING id, name, kind, paths, scan_interval_hours, last_scan_at, auto_subtitles
 `
 
 type SaveLibraryParams struct {
@@ -1183,6 +1196,7 @@ func (q *Queries) SaveLibrary(ctx context.Context, arg SaveLibraryParams) (Libra
 		&i.Paths,
 		&i.ScanIntervalHours,
 		&i.LastScanAt,
+		&i.AutoSubtitles,
 	)
 	return i, err
 }

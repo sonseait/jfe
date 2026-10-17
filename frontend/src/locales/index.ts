@@ -1,5 +1,7 @@
 import i18n from 'i18next';
+import { jobHistoryStrings } from './job-history';
 import { adminStrings } from './admin';
+import { automaticSubtitleStrings } from './automatic-subtitles';
 import { audioStrings } from './audio';
 import { initReactI18next } from 'react-i18next';
 const strings: Record<string, [string, string]> = {
@@ -7,13 +9,14 @@ const strings: Record<string, [string, string]> = {
   'openSub.english': ['English', 'Tiếng Anh'],
   'openSub.search': ['Find on OpenSubtitles', 'Tìm trên OpenSubtitles'],
   'openSub.help': [
-    'Choose a release matching your video. Downloads are personal and do not modify the original movie. Provider accounts have download quotas.',
-    'Chọn bản phát hành khớp với video. Phụ đề tải về dành riêng cho tài khoản của bạn, không sửa phim gốc. Tài khoản nhà cung cấp có giới hạn tải.',
+    'Choose a release matching the selected video file. Downloads are personal and selected for your next playback. Provider accounts have download quotas.',
+    'Chọn bản phát hành khớp với file video đã chọn. Phụ đề tải về dành riêng cho tài khoản của bạn và được chọn cho lần phát tiếp theo. Tài khoản nhà cung cấp có giới hạn tải.',
   ],
   'openSub.automatic': [
-    'Use this movie or episode automatically',
-    'Tự tìm theo phim hoặc tập đang xem',
+    'Use the English title and year from movie or series metadata',
+    'Tự dùng tên tiếng Anh và năm từ metadata phim hoặc series',
   ],
+  'openSub.searchTarget': ['Results for {{title}}', 'Kết quả cho {{title}}'],
   'openSub.downloading': ['Downloading and preparing subtitles…', 'Đang tải và chuẩn bị phụ đề…'],
   'openSub.downloadFailed': [
     'Subtitle download failed. Check OpenSubtitles credentials, quota and scanner status.',
@@ -27,13 +30,18 @@ const strings: Record<string, [string, string]> = {
     'No subtitles found. Try another title or language.',
     'Không tìm thấy phụ đề. Thử tên phim hoặc ngôn ngữ khác.',
   ],
-  'openSub.ready': ['Subtitles downloaded and selected', 'Đã tải và chọn phụ đề'],
-  'openSub.use': ['Download & use', 'Tải và sử dụng'],
+  'openSub.ready': [
+    'Subtitles downloaded and selected for the next playback',
+    'Đã tải phụ đề và chọn cho lần phát tiếp theo',
+  ],
+  'openSub.download': ['Download subtitles', 'Tải phụ đề'],
   'openSub.downloadCount': ['{{count}} downloads', '{{count}} lượt tải'],
   'openSub.hearingImpaired': ['Hearing impaired', 'Hỗ trợ người khiếm thính'],
   'native.job.subtitle_prepare': ['Subtitle preparation', 'Chuẩn bị phụ đề'],
   'native.job.subtitle_download': ['OpenSubtitles download', 'Tải phụ đề OpenSubtitles'],
   ...adminStrings,
+  ...jobHistoryStrings,
+  ...automaticSubtitleStrings,
   ...audioStrings,
   'ai.title': ['AI movie suggestions', 'Gợi ý phim AI'],
   'ai.description': [

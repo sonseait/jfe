@@ -21,6 +21,24 @@ import (
 type Empty struct{}
 type Principal struct{ ID, Role string }
 type principalKey struct{}
+type requestErrorKey struct{}
+type operationKey struct{}
+
+func RequestError(c fiber.Ctx) error { e, _ := c.Locals(requestErrorKey{}).(error); return e }
+func PollingRequest(c fiber.Ctx) bool {
+	operation, _ := c.Locals(operationKey{}).(string)
+	if operation == "playbackProgress" {
+		return true
+	}
+	if c.Method() != "GET" && c.Method() != "HEAD" {
+		return false
+	}
+	switch operation {
+	case "getHealth", "getSystem", "listLibraries", "listJobs", "getJobHistory", "listWorkers", "getPlayback", "getSubtitleProvider", "getAutomaticSubtitles", "getOpenSubtitleDownload", "getSubtitleSyncJob", "streamPlayback":
+		return true
+	}
+	return false
+}
 
 func User(ctx context.Context) Principal { p, _ := ctx.Value(principalKey{}).(Principal); return p }
 
@@ -181,7 +199,10 @@ func Register[B, Q, P, R any](reg *Registry, op Operation, handler func(context.
 	}
 	reg.Spec.Paths[path][strings.ToLower(op.Method)] = operation
 	reg.App.Add([]string{op.Method}, op.Path, func(c fiber.Ctx) error {
-		ctx := c.Context()
+		c.Locals(operationKey{}, op.ID)
+		logger := log.Ctx(c.Context()).With().Str("operation", op.ID).Logger()
+		ctx := logger.WithContext(c.Context())
+		c.SetContext(ctx)
 		if op.Access != "" {
 			authorization := c.Get("Authorization")
 			if !strings.HasPrefix(authorization, "Bearer ") {
@@ -194,10 +215,13 @@ func Register[B, Q, P, R any](reg *Registry, op Operation, handler func(context.
 			if err != nil {
 				return writeError(c, err)
 			}
+			ctx = context.WithValue(ctx, principalKey{}, principal)
+			logger = logger.With().Str("userId", principal.ID).Logger()
+			ctx = logger.WithContext(ctx)
+			c.SetContext(ctx)
 			if op.Access == "admin" && principal.Role != "admin" {
 				return writeError(c, Fail(403, "Administrator required"))
 			}
-			ctx = context.WithValue(ctx, principalKey{}, principal)
 		}
 		var input Input[B, Q, P]
 		if hasBody {
@@ -223,6 +247,16 @@ func Register[B, Q, P, R any](reg *Registry, op Operation, handler func(context.
 		if err := bind(paramValidator, paramType, func(k string) (string, bool) { return c.Params(k), c.Params(k) != "" }, &input.Params); err != nil {
 			return writeError(c, err)
 		}
+		// Only validated UUID path identifiers enter logs; query/body values may contain credentials.
+		fields := logger.With()
+		for _, parameter := range operation.Parameters {
+			if parameter.In == "path" && parameter.Schema["format"] == "uuid" {
+				fields = fields.Str(parameter.Name, c.Params(parameter.Name))
+			}
+		}
+		logger = fields.Logger()
+		ctx = logger.WithContext(ctx)
+		c.SetContext(ctx)
 		out, err := handler(ctx, input)
 		if err != nil {
 			return writeError(c, err)
@@ -294,6 +328,7 @@ func writeError(c fiber.Ctx, err error) error {
 
 // ErrorHandler preserves diagnostics server-side while keeping internal errors private.
 func ErrorHandler(c fiber.Ctx, err error) error {
+	c.Locals(requestErrorKey{}, err)
 	var p *Problem
 	if !errors.As(err, &p) {
 		p = &Problem{500, "Internal Server Error", "The request could not be completed"}
@@ -304,11 +339,6 @@ func ErrorHandler(c fiber.Ctx, err error) error {
 				p.Detail = p.Title
 			}
 		}
-	}
-	if p.Status >= 500 {
-		log.Error().Err(err).Str("requestId", c.GetRespHeader("X-Request-ID")).
-			Str("method", c.Method()).Str("route", c.Route().Path).
-			Int("status", p.Status).Msg("request failed")
 	}
 	return c.Status(p.Status).JSON(p, "application/problem+json")
 }

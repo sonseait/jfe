@@ -17,6 +17,20 @@ type Cue struct {
 	Text  string  `json:"text"`
 }
 
+// SubtitleParseError identifies a validation failure without retaining cue text.
+type SubtitleParseError struct {
+	Reason     string
+	Line       int
+	ParsedCues int
+}
+
+func (e *SubtitleParseError) Error() string {
+	if e.Line > 0 {
+		return fmt.Sprintf("%s at line %d (%d cues parsed)", e.Reason, e.Line, e.ParsedCues)
+	}
+	return e.Reason
+}
+
 var subtitleTime = regexp.MustCompile(`^(?:(\d{1,3}):)?(\d{2}):(\d{2})[.,](\d{3})$`)
 var subtitleTags = regexp.MustCompile(`<[^>]*>`)
 
@@ -37,13 +51,26 @@ func cueTime(value string) (float64, error) {
 
 // ParseSubtitles accepts UTF-8 SRT/WebVTT and stores plain-text cues, never markup.
 func ParseSubtitles(content string) ([]Cue, error) {
+	return parseSubtitles(content, false)
+}
+
+// ParseSelectedSubtitles keeps usable cues from a user-selected download when
+// individual cues have zero or negative duration. Stored cues remain playable.
+func ParseSelectedSubtitles(content string) ([]Cue, error) {
+	return parseSubtitles(content, true)
+}
+
+func parseSubtitles(content string, skipInvalidDuration bool) ([]Cue, error) {
 	if len(content) > 512*1024 || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
-		return nil, fmt.Errorf("invalid subtitle encoding or size")
+		return nil, &SubtitleParseError{Reason: "invalid_encoding_or_size"}
 	}
 	content = strings.TrimPrefix(content, "\ufeff")
 	content = strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
 	lines := strings.Split(content, "\n")
 	cues := []Cue{}
+	fail := func(reason string, line int) error {
+		return &SubtitleParseError{Reason: reason, Line: line, ParsedCues: len(cues)}
+	}
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		if line == "NOTE" || strings.HasPrefix(line, "NOTE ") || line == "STYLE" || line == "REGION" {
@@ -57,38 +84,45 @@ func ParseSubtitles(content string) ([]Cue, error) {
 		}
 		parts := strings.Split(line, "-->")
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid cue")
+			return nil, fail("invalid_cue_separator", i+1)
 		}
 		endParts := strings.Fields(parts[1])
 		if len(endParts) == 0 {
-			return nil, fmt.Errorf("invalid cue")
+			return nil, fail("missing_end_timestamp", i+1)
 		}
 		start, err := cueTime(strings.TrimSpace(parts[0]))
 		if err != nil {
-			return nil, err
+			return nil, fail("invalid_start_timestamp", i+1)
 		}
 		end, err := cueTime(endParts[0])
-		if err != nil || end <= start {
-			return nil, fmt.Errorf("invalid cue duration")
+		if err != nil {
+			return nil, fail("invalid_end_timestamp", i+1)
 		}
+		if end <= start && !skipInvalidDuration {
+			return nil, fail("non_positive_cue_duration", i+1)
+		}
+		timingLine := i + 1
 		text := []string{}
 		for i++; i < len(lines) && strings.TrimSpace(lines[i]) != ""; i++ {
 			text = append(text, lines[i])
+		}
+		if end <= start {
+			continue
 		}
 		plain := strings.TrimSpace(html.UnescapeString(subtitleTags.ReplaceAllString(strings.Join(text, "\n"), "")))
 		if plain == "" {
 			continue
 		}
 		if len(plain) > 8192 {
-			return nil, fmt.Errorf("cue too long")
+			return nil, fail("cue_too_long", timingLine)
 		}
 		cues = append(cues, Cue{Start: start, End: end, Text: plain})
 		if len(cues) > 20000 {
-			return nil, fmt.Errorf("too many cues")
+			return nil, fail("too_many_cues", timingLine)
 		}
 	}
 	if len(cues) == 0 {
-		return nil, fmt.Errorf("no subtitle cues")
+		return nil, fail("no_subtitle_cues", 0)
 	}
 	sort.SliceStable(cues, func(i, j int) bool { return cues[i].Start < cues[j].Start })
 	return cues, nil

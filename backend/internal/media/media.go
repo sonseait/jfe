@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Scalar string
@@ -74,10 +75,11 @@ type Stream struct {
 const ProbeVersion = 4
 
 type Probe struct {
-	Version  int       `json:"probe_version,omitempty"`
-	Streams  []Stream  `json:"streams"`
-	Chapters []Chapter `json:"chapters"`
-	Format   struct {
+	NextSubtitleIndex int       `json:"next_subtitle_index,omitempty"`
+	Version           int       `json:"probe_version,omitempty"`
+	Streams           []Stream  `json:"streams"`
+	Chapters          []Chapter `json:"chapters"`
+	Format            struct {
 		Tags     map[string]string `json:"tags"`
 		Duration Scalar            `json:"duration"`
 		Name     string            `json:"format_name"`
@@ -164,7 +166,29 @@ func Parse(path string) Name {
 	return n
 }
 func clean(s string) string {
-	return strings.Trim(strings.Join(strings.Fields(strings.NewReplacer(".", " ", "_", " ").Replace(s)), " "), " -()[]")
+	return strings.Trim(strings.Join(strings.Fields(strings.NewReplacer(".", " ", "_", " ").Replace(CleanSearchTitle(s))), " "), " -()[]")
+}
+
+// CleanSearchTitle removes Han text from mixed tracker release names, keeping
+// the Latin title. A Han-only name remains usable for TMDB identification.
+// Original media paths and provider-localized display metadata are not renamed.
+func CleanSearchTitle(title string) string {
+	latin := false
+	for _, r := range title {
+		if unicode.Is(unicode.Latin, r) {
+			latin = true
+			break
+		}
+	}
+	if latin {
+		title = strings.Map(func(r rune) rune {
+			if unicode.Is(unicode.Han, r) || strings.ContainsRune("【】「」『』《》〈〉（）", r) {
+				return ' '
+			}
+			return r
+		}, title)
+	}
+	return strings.Trim(strings.Join(strings.Fields(title), " "), " ._-()[]")
 }
 func IsVideo(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {

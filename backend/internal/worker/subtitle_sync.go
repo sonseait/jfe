@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/audio"
 	"jfe/backend/internal/media"
 	"jfe/backend/internal/store"
@@ -56,6 +57,7 @@ func subtitleWritable(path string) error {
 	return os.Remove(t.Name())
 }
 func (w *Worker) subtitleJob(ctx context.Context, j store.Job) (err error) {
+	jobStage(ctx, "prepare_subtitle_edit")
 	record, e := w.DB.GetSubtitleSyncJob(ctx, j.ID)
 	if e != nil {
 		return e
@@ -200,6 +202,7 @@ func (w *Worker) subtitleJob(ctx context.Context, j store.Job) (err error) {
 	if filepath.Dir(source) != filepath.Dir(video) {
 		return subtitleError("subtitle_changed")
 	}
+	jobStage(ctx, "publish_subtitle_edit")
 	journal := filepath.Join(filepath.Dir(source), ".jfe-subtitle-"+j.ID+".json")
 	tmp := filepath.Join(filepath.Dir(source), ".jfe-subtitle-"+j.ID+filepath.Ext(source))
 	tomb := filepath.Join(filepath.Dir(source), ".jfe-subtitle-"+j.ID+".old")
@@ -389,6 +392,26 @@ func (w *Worker) subtitleCues(ctx context.Context, source string, track media.St
 }
 func (w *Worker) discoverSubtitleSidecars(path string, probe *media.Probe) error {
 	base := strings.TrimSuffix(path, filepath.Ext(path))
+	previous := map[string]int{}
+	nextIndex := 10000
+	if probe.NextSubtitleIndex > nextIndex {
+		nextIndex = probe.NextSubtitleIndex
+	}
+	streams := make([]media.Stream, 0, len(probe.Streams))
+	for _, track := range probe.Streams {
+		if track.ExternalPath != "" {
+			previous[track.ExternalPath] = track.Index
+			if track.Index >= nextIndex {
+				nextIndex = track.Index + 1
+			}
+		} else {
+			streams = append(streams, track)
+			if track.Index >= nextIndex {
+				nextIndex = track.Index + 1
+			}
+		}
+	}
+	probe.Streams = streams
 	siblings, e := os.ReadDir(filepath.Dir(path))
 	if e != nil {
 		return e
@@ -408,8 +431,16 @@ func (w *Worker) discoverSubtitleSidecars(path string, probe *media.Probe) error
 			continue
 		}
 		lang := strings.TrimPrefix(strings.TrimPrefix(stem, base), ".")
-		probe.Streams = append(probe.Streams, media.Stream{Index: 10000 + len(probe.Streams), Type: "subtitle", Codec: strings.TrimPrefix(ext, "."), ExternalPath: safe, Tags: map[string]string{"language": lang}})
+		index, exists := previous[safe]
+		if !exists {
+			index = nextIndex
+			nextIndex++
+		}
+		probe.Streams = append(probe.Streams, media.Stream{Index: index, Type: "subtitle", Codec: strings.TrimPrefix(ext, "."), ExternalPath: safe, Tags: map[string]string{"language": lang}})
 	}
+	// Keep a high-water mark even after a sidecar disappears, so its identity
+	// and personal offsets can never be reassigned to a newly downloaded source.
+	probe.NextSubtitleIndex = nextIndex
 	return nil
 }
 func (w *Worker) refreshSubtitleFile(ctx context.Context, file store.MediaFile, path string) error {
@@ -460,10 +491,16 @@ func (w *Worker) refreshSubtitleFile(ctx context.Context, file store.MediaFile, 
 func (w *Worker) recoverSubtitles(ctx context.Context) {
 	records, e := w.DB.RecoverableSubtitleJobs(ctx)
 	if e != nil {
+		if ctx.Err() == nil {
+			log.Ctx(ctx).Error().Err(e).Str("operation", "list_subtitle_recovery").Msg("subtitle recovery failed")
+		}
 		return
 	}
 	for _, r := range records {
 		func() {
+			logger := log.Ctx(ctx).With().Str("jobId", r.ID).Str("fileId", r.FileID).Str("phase", r.Phase).Logger()
+			ctx := logger.WithContext(ctx)
+			log.Ctx(ctx).Debug().Msg("recovering subtitle publication")
 			f, e := w.DB.GetFile(ctx, r.FileID)
 			if e != nil {
 				return
@@ -504,7 +541,7 @@ func (w *Worker) recoverSubtitles(ctx context.Context) {
 				_ = os.Remove(tmp)
 				_ = os.Remove(tomb)
 				_ = os.Remove(journal)
-				_ = w.DB.CompleteRecoveredSubtitleJob(ctx, r.ID)
+				w.maintenance(ctx, "complete_recovered_subtitle", func(ctx context.Context) error { return w.DB.CompleteRecoveredSubtitleJob(ctx, r.ID) })
 				return
 			}
 			data, e := os.ReadFile(journal)
@@ -539,6 +576,7 @@ func (w *Worker) recoverSubtitles(ctx context.Context) {
 				return
 			}
 			if e = w.refreshSubtitleFile(ctx, f, video); e != nil {
+				log.Ctx(ctx).Error().Err(e).Msg("could not reindex recovered subtitle publication")
 				return
 			}
 			if e = os.Remove(tomb); e != nil && !errors.Is(e, os.ErrNotExist) {
@@ -552,7 +590,7 @@ func (w *Worker) recoverSubtitles(ctx context.Context) {
 			}
 			_ = os.Remove(tmp)
 			_ = os.Remove(journal)
-			_ = w.DB.CompleteRecoveredSubtitleJob(ctx, r.ID)
+			w.maintenance(ctx, "complete_recovered_subtitle", func(ctx context.Context) error { return w.DB.CompleteRecoveredSubtitleJob(ctx, r.ID) })
 		}()
 	}
 }

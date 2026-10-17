@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/audio"
 	"jfe/backend/internal/media"
 	"jfe/backend/internal/route"
@@ -210,12 +211,13 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	if e != nil {
 		return PlaybackDTO{}, e
 	}
+	var playbackJob store.Job
 	if method != "direct" {
 		payload, _ := json.Marshal(struct {
 			PlaybackRequest
 			Decision PlaybackDecisionDTO `json:"decision"`
 		}{b, decision})
-		_, e = q.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "transcoder", Kind: "playback", ResourceID: id, Payload: payload})
+		playbackJob, e = q.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "transcoder", Kind: "playback", ResourceID: id, Payload: payload})
 		if e != nil {
 			return PlaybackDTO{}, e
 		}
@@ -223,6 +225,10 @@ func (s *Server) startPlayback(ctx context.Context, b PlaybackRequest) (Playback
 	if e = tx.Commit(ctx); e != nil {
 		return PlaybackDTO{}, e
 	}
+	if playbackJob.ID != "" {
+		logQueued(ctx, jobDTO(playbackJob))
+	}
+	log.Ctx(ctx).Info().Str("playbackId", id).Str("fileId", f.ID).Str("itemId", f.ItemID).Str("playbackMethod", method).Str("state", state).Bool("preview", b.Preview).Str("reason", decision.Reason).Str("videoAction", decision.VideoAction).Str("audioAction", decision.AudioAction).Str("subtitleAction", decision.SubtitleAction).Msg("playback session created")
 	p, e := s.DB.GetPlayback(ctx, id)
 	if e != nil {
 		return PlaybackDTO{}, e

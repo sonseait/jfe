@@ -6,6 +6,8 @@ package store
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AudioCollectionMember struct {
@@ -29,6 +31,16 @@ type AudioTagJob struct {
 	Phase       string
 	Error       string
 	UpdatedAt   time.Time
+}
+
+type AutomaticSubtitle struct {
+	FileID         string
+	State          string
+	NextSearchAt   time.Time
+	UpdatedAt      time.Time
+	ProviderFileID int32
+	ErrorCode      string
+	Publication    []byte
 }
 
 type ImportEntry struct {
@@ -96,6 +108,24 @@ type Job struct {
 	NextAttemptAt   time.Time
 }
 
+type JobLog struct {
+	ID        int64
+	RunID     string
+	Event     []byte
+	CreatedAt time.Time
+}
+
+type JobRun struct {
+	ID          string
+	JobID       string
+	Attempt     int32
+	WorkerID    string
+	StartedAt   time.Time
+	FinishedAt  pgtype.Timestamptz
+	State       string
+	DroppedLogs int32
+}
+
 type Library struct {
 	ID                string
 	Name              string
@@ -103,6 +133,7 @@ type Library struct {
 	Paths             []string
 	ScanIntervalHours int32
 	LastScanAt        time.Time
+	AutoSubtitles     bool
 }
 
 type LibraryAccess struct {
@@ -155,6 +186,18 @@ type Session struct {
 type Setting struct {
 	Key   string
 	Value []byte
+}
+
+type SubtitleProviderState struct {
+	ID         bool
+	Status     string
+	Vip        bool
+	Remaining  int32
+	ResetAt    time.Time
+	RetryAt    time.Time
+	CheckedAt  time.Time
+	LeaseID    string
+	LeaseUntil time.Time
 }
 
 type SubtitleSyncJob struct {

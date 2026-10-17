@@ -36,6 +36,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 	if audio.IsLibrary(l.Kind) {
 		return w.scanAudio(ctx, l, report)
 	}
+	jobStage(ctx, "discover_media")
 	seen := map[string]bool{}
 	roots := map[string]string{}
 	paths := []string{}
@@ -88,6 +89,8 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 		return e
 	}
 	for n, real := range paths {
+		jobFile(ctx, real)
+		jobStage(ctx, "probe_media")
 		if e = ctx.Err(); e != nil {
 			return e
 		}
@@ -106,13 +109,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			cached := e == nil && old.Size == stat.Size() && old.ModifiedAt == stat.ModTime().UnixNano() && json.Unmarshal(old.Probe, &probe) == nil && probe.Version >= media.ProbeVersion
 			if cached {
 				// Rebuild sidecars each scan even when the video itself has not changed.
-				streams := probe.Streams[:0]
-				for _, stream := range probe.Streams {
-					if stream.ExternalPath == "" {
-						streams = append(streams, stream)
-					}
-				}
-				probe.Streams = streams
+				// discoverSubtitleSidecars rebuilds external sources and preserves their indices.
 				e = nil
 			} else {
 				probe, e = media.Inspect(ctx, real)
@@ -123,6 +120,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 			if probe.Duration() <= 0 {
 				return fmt.Errorf("media has no duration")
 			}
+			jobStage(ctx, "index_media")
 			name := media.Parse(real)
 			kind, parentID := "movie", ""
 			itemID := stable(id, real)
@@ -165,11 +163,13 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 				}
 				showMetadataPaths[parentID] = filepath.Join(showRoot, "tvshow.mkv")
 			}
+			jobStage(ctx, "local_metadata")
 			return w.localMetadata(ctx, itemID, real, options.ForceMetadata)
 		}()
 		if e != nil {
 			// A corrupt or unsupported file must not prevent the rest of a library from scanning.
-			log.Warn().Err(e).Str("file", filepath.Base(real)).Str("libraryId", id).Msg("skipping media file")
+			jobSkipped(ctx)
+			log.Ctx(ctx).Warn().Err(e).Str("file", filepath.Base(real)).Str("libraryId", id).Msg("skipping media file")
 			if e = report(n+1, len(paths)); e != nil {
 				return e
 			}
@@ -373,6 +373,7 @@ func (w *Worker) saveArtwork(id string, r io.Reader) error {
 	return os.Rename(f.Name(), filepath.Join(dir, id+".jpg"))
 }
 func (w *Worker) metadata(ctx context.Context, j store.Job) error {
+	jobStage(ctx, "fetch_metadata")
 	if w.Config.TMDBToken == "" {
 		return media.ErrTMDBNotConfigured
 	}
@@ -498,7 +499,7 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Msg("poster unavailable; keeping metadata")
+			log.Ctx(ctx).Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Msg("poster unavailable; keeping metadata")
 		} else if found {
 			i.Poster = i.ID + ".jpg"
 		}
@@ -520,7 +521,7 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					log.Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Int("actorId", actor.ID).Msg("cast portrait unavailable; keeping metadata")
+					log.Ctx(ctx).Warn().Err(err).Str("jobId", j.ID).Str("itemId", i.ID).Int("actorId", actor.ID).Msg("cast portrait unavailable; keeping metadata")
 				} else if image != "" {
 					person.Image = image
 				}
@@ -529,7 +530,7 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		}
 	}
 	if artworkCtx.Err() != nil && ctx.Err() == nil {
-		log.Warn().Str("jobId", j.ID).Str("itemId", i.ID).Msg("artwork deadline exceeded; keeping metadata and skipping remaining images")
+		log.Ctx(ctx).Warn().Str("jobId", j.ID).Str("itemId", i.ID).Msg("artwork deadline exceeded; keeping metadata and skipping remaining images")
 	}
 	i.CastMembers, _ = json.Marshal(cast)
 	if info.Title == "" {

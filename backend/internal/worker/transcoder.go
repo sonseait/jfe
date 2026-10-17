@@ -40,6 +40,7 @@ func hlsHasInitialBuffer(dir string) bool {
 }
 
 func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
+	jobStage(ctx, "prepare_playback")
 	p, e := w.DB.GetPlayback(ctx, j.ResourceID)
 	if e != nil {
 		return e
@@ -306,9 +307,12 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 	}
 	defer logFile.Close()
 	cmd.Stderr = logFile
+	jobStage(ctx, "start_ffmpeg")
 	if e = cmd.Start(); e != nil {
 		return e
 	}
+	log.Ctx(ctx).Info().Int("ffmpegPid", cmd.Process.Pid).Str("playbackMethod", p.Method).Bool("preview", p.Preview).Str("videoCodec", b.Decision.VideoCodec).Str("audioAction", b.Decision.AudioAction).Int("maxHeight", b.MaxHeight).Int("maxBitrate", b.MaxBitrate).Msg("FFmpeg started")
+	jobStage(ctx, "prepare_stream")
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	ticker := time.NewTicker(300 * time.Millisecond)
@@ -353,6 +357,8 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 		if err := w.DB.SetPlaybackReady(ctx, p.ID); err != nil {
 			return err
 		}
+		jobStage(ctx, "stream_ready")
+		log.Ctx(ctx).Info().Dur("startupMs", time.Since(j.UpdatedAt)).Msg("playback stream ready")
 		// Playback can begin as soon as the playlist exists; measurements are optional.
 		measured = make(chan struct{})
 		go func() {
@@ -366,13 +372,13 @@ func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
 				return
 			}
 			if err != nil {
-				log.Warn().Err(err).Str("playbackId", p.ID).Msg("Could not measure output stream bitrate")
+				log.Ctx(ctx).Warn().Err(err).Str("playbackId", p.ID).Msg("Could not measure output stream bitrate")
 				sample.BitrateSource = "unavailable"
 			}
 			sample.VideoTranscoded = info.VideoTranscoded
 			sample.ToneMapped = info.ToneMapped
 			if err := writeStreamInfo(dir, sample); err != nil {
-				log.Warn().Err(err).Str("playbackId", p.ID).Msg("Could not save output stream bitrate")
+				log.Ctx(ctx).Warn().Err(err).Str("playbackId", p.ID).Msg("Could not save output stream bitrate")
 			}
 		}()
 		return nil
@@ -468,6 +474,9 @@ func (w *Worker) cleanup(ctx context.Context) {
 	root := filepath.Join(w.Config.CacheRoot, "playback")
 	entries, e := os.ReadDir(root)
 	if e != nil {
+		if !errors.Is(e, os.ErrNotExist) && ctx.Err() == nil {
+			log.Ctx(ctx).Warn().Err(e).Msg("playback cache listing failed")
+		}
 		return
 	}
 	for _, entry := range entries {
@@ -479,9 +488,14 @@ func (w *Worker) cleanup(ctx context.Context) {
 			continue
 		}
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			if ctx.Err() == nil {
+				log.Ctx(ctx).Error().Err(e).Str("playbackId", entry.Name()).Msg("playback cleanup lookup failed")
+			}
 			return
 		}
-		_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		if e := os.RemoveAll(filepath.Join(root, entry.Name())); e != nil {
+			log.Ctx(ctx).Warn().Err(e).Str("playbackId", entry.Name()).Msg("playback cache cleanup failed")
+		}
 	}
 }
 

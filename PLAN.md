@@ -146,6 +146,10 @@ Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách 
 - Bật qua `JFE_SUBTITLE_EDITING`, mặc định tắt. API/transcoder chỉ đọc; scanner có quyền ghi có chủ đích. Xác nhận thao tác ghi đè/xóa; khóa file, kiểm tra fingerprint, journal phục hồi, thay thế atomic và không giữ backup sau khi hoàn tất. Chặn chỉnh sửa khi file đang được phát.
 
 - Tìm phụ đề OpenSubtitles.com tùy chọn theo phim/tập và ngôn ngữ EN/VI, tải và giải nén qua job scanner vào kho phụ đề cá nhân; không sửa media gốc. Cấu hình credentials phía server, tôn trọng quyền thư viện và hạn mức nhà cung cấp.
+- Tự động bổ sung phụ đề tiếng Việt thiếu theo từng thư viện phim/series, gồm nội dung cũ và mới: tìm sau scan và mỗi 24 giờ. Track nhúng hoặc sidecar tiếng Việt, kể cả phụ đề hình ảnh, được tính là đã đủ; không tự nâng cấp hoặc thay thế phụ đề hiện có.
+- Scanner lưu `<tên-video>.vi.srt` cạnh video khi bật `JFE_SUBTITLE_DOWNLOADS` và chính sách thư viện. API/transcoder giữ mount chỉ đọc. Xuất bản nguyên tử không ghi đè, khóa/fingerprint/lease và journal phục hồi; không sửa hoặc encode video/audio, không reset timing track cũ.
+- Tìm phụ đề theo tên và năm đã lưu trong metadata; ưu tiên title tiếng Anh từ TMDB nếu có. Series dùng tên series và số mùa/tập. Loại phần chữ Trung Quốc khỏi tên file trộn Trung/Latin khi tìm metadata hoặc cần fallback tên file; không đổi tên file gốc. Không yêu cầu hash, nguồn phát hành, release group hoặc TMDB ID để chấp nhận; từ chối năm/định danh/số tập mâu thuẫn. Thử tối đa 3 ứng viên mỗi lượt chạy nếu file tải về không hợp lệ, trong giới hạn thời gian và quota.
+- API key và tài khoản VIP cấu hình qua `.env`/environment server; tự đăng nhập lại khi không đặt token tường minh. PostgreSQL điều phối truy cập/hạn mức chung cho tải thủ công và tự động. Admin xem kết nối/VIP/quota, bật theo thư viện, xem trạng thái phân trang và yêu cầu tìm ngay; giao diện EN/VI, không phụ thuộc chế độ NVIDIA để tải.
 - Bổ sung font phụ đề text và ghi nhớ lựa chọn phát theo tài khoản/file phim trên cùng trình duyệt; timing cá nhân tiếp tục lưu phía server.
 
 ## Gợi ý phim bằng Gemini trong Admin

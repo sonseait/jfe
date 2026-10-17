@@ -15,7 +15,7 @@ to copy. Preserve attribution and AGPL licensing of adapted backend code.
   is an api subcommand. Database migrations run through the external migrate CLI.
   Workers share PostgreSQL and media/cache volumes.
 - api owns HTTP, access control and file serving. scanner owns scan/probe,
-  metadata, audio tag writes and scan scheduling. transcoder owns FFmpeg playback processes.
+  metadata, audio tag writes, automatic OpenSubtitles sidecars and scan scheduling. transcoder owns FFmpeg playback processes.
   downloader owns YouTube preview/download and subscription scheduling.
 - Product endpoints go through the typed route registration wrapper. Body,
   query, params and response have DTOs; Empty represents unused input. Route
@@ -42,7 +42,8 @@ V1 targets movies/series plus music, podcasts and audiobooks, local metadata, TM
 and optional MusicBrainz, independent admin/user accounts, direct play/remux and
 NVIDIA NVENC HLS. Video mounts remain read-only for api/transcoder. Scanner may
 write video directories only for explicitly enabled original subtitle sync/deletion
-(`JFE_SUBTITLE_EDITING`); publish through leased jobs with locks, fingerprints and
+(`JFE_SUBTITLE_EDITING`) or creation of new OpenSubtitles sidecars
+(`JFE_SUBTITLE_DOWNLOADS`, separately enabled per video library); publish through leased jobs with locks, fingerprints and
 recovery journals, without video/audio encoding. Audio mounts must be writable by
 scanner for explicit tag edits. The import volume is writable by scanner/downloader
 and read-only for api/transcoder. Video
@@ -51,6 +52,13 @@ a software video encoder or fall back to CPU video encoding. Audio encoding,
 decoding and filters can use CPU. No household profiles, Jellyfin
 compatibility, other GPU backends, plugins, Redis, S3 or cluster in v1.
 The frontend uses the native API only. Production must never use fixture responses.
+
+Automatic subtitles target missing Vietnamese tracks, count embedded/sidecar tracks
+as complete, and never overwrite existing subtitles. Scanner owns provider jobs;
+serialize provider access/quota across API/scanner in PostgreSQL. Credentials stay
+in server configuration; tokens are cached only in memory. Publication must use
+an atomic no-replace operation and durable recovery journal. Adding a sidecar must
+preserve existing track identities and personal timing.
 
 Enforce library permissions on catalog, images and streams. Hash login tokens,
 use short-lived playback credentials, and never log secrets. Resolve media paths

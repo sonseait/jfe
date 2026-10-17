@@ -1,3 +1,6 @@
+import { OpenSubtitles } from './OpenSubtitles';
+import { queryClient } from '../lib/query-client';
+import { filmTrackSignature, saveFilmPreferences } from './playback-preferences';
 import { SubtitleManagerButton } from './SubtitleEditor';
 import Libraries from './Libraries';
 import AudioPlayer, { isAudioItem, isAudioGroup, useAudioPlayer } from './AudioPlayer';
@@ -586,6 +589,10 @@ export function Catalog({
 }
 function Detail() {
   const { t } = useTranslation();
+  const userId = useAuth((s) => s.user?.id);
+  const system = useResource('system', async (signal) =>
+    result(await api.GET('/api/v1/system', { signal })),
+  );
   const { id = '' } = useParams();
   const detail = useResource(['item', id], async (signal) =>
     result(await api.GET('/api/v1/items/{id}', { params: { path: { id } }, signal })),
@@ -699,6 +706,32 @@ function Detail() {
                       initialFileId={activeFile?.id}
                     />
                   )}
+                  {(item.kind === 'movie' || item.kind === 'episode') &&
+                    activeFile &&
+                    system.data?.capabilities.openSubtitles &&
+                    system.data.capabilities.transcoding && (
+                      <OpenSubtitles
+                        key={activeFile.id}
+                        fileId={activeFile.id}
+                        fileName={activeFile.name}
+                        onDownloaded={async (subtitleId) => {
+                          saveFilmPreferences(
+                            userId,
+                            activeFile.id,
+                            filmTrackSignature(activeFile),
+                            { subtitle: `upload:${subtitleId}` },
+                          );
+                          await Promise.all([
+                            queryClient.invalidateQueries({
+                              queryKey: ['native', userId, 'subtitles', activeFile.id],
+                            }),
+                            queryClient.invalidateQueries({
+                              queryKey: ['native', userId, 'subtitleSources', activeFile.id],
+                            }),
+                          ]);
+                        }}
+                      />
+                    )}
                   {admin && (
                     <Button variant="default" onClick={() => setEdit(true)}>
                       {t('editMetadata')}

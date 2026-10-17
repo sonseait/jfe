@@ -18,8 +18,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/config"
+	"jfe/backend/internal/observability"
 	"jfe/backend/internal/route"
 	"jfe/backend/internal/store"
 )
@@ -38,11 +40,26 @@ func New(cfg config.Config, pool *pgxpool.Pool) *Server {
 	app.Use(requestid.New())
 	app.Use(func(c fiber.Ctx) error {
 		start := time.Now()
+		logger := log.Logger.With().Str("requestId", c.GetRespHeader("X-Request-ID")).Str("method", c.Method()).Logger()
+		c.SetContext(logger.WithContext(c.Context()))
 		err := c.Next()
 		if err != nil {
 			err = route.ErrorHandler(c, err)
 		}
-		log.Info().Str("requestId", c.GetRespHeader("X-Request-ID")).Str("method", c.Method()).Str("route", c.Route().Path).Int("status", c.Response().StatusCode()).Dur("duration", time.Since(start)).Msg("request")
+		status := c.Response().StatusCode()
+		level := zerolog.InfoLevel
+		if status >= 500 {
+			level = zerolog.ErrorLevel
+		} else if status >= 400 {
+			level = zerolog.WarnLevel
+		} else if route.PollingRequest(c) {
+			level = zerolog.DebugLevel
+		}
+		event := log.Ctx(c.Context()).WithLevel(level).Str("route", c.Route().Path).Int("status", status).Dur("durationMs", time.Since(start))
+		if requestErr := route.RequestError(c); requestErr != nil {
+			event = observability.Error(event, requestErr)
+		}
+		event.Msg("http request completed")
 		return err
 	})
 	app.Use(recover.New())

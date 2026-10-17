@@ -14,6 +14,7 @@ import (
 
 func (s *Server) register() {
 	r := s.Routes
+	s.jobHistoryRoutes()
 	route.Get(r, op("/system", "getSystem", ""), func(ctx context.Context, _ route.Input[route.Empty, route.Empty, route.Empty]) (route.Output[SystemDTO], error) {
 		if s.DB == nil {
 			return out(SystemDTO{}, route.Fail(503, "Database unavailable"))
@@ -30,8 +31,12 @@ func (s *Server) register() {
 		if err != nil {
 			return route.Output[SystemDTO]{}, fmt.Errorf("get system: parse encoding settings: %w", err)
 		}
+		autoReady, err := s.DB.AutoSubtitlesWorkerReady(ctx)
+		if err != nil {
+			return out(SystemDTO{}, err)
+		}
 		general, err := appsettings.Load(ctx, s.DB)
-		return out(SystemDTO{Name: general.ServerName, Version: "0.1.0", SetupRequired: n == 0, Capabilities: Capabilities{OpenSubtitles: s.openSubtitlesAvailable(ctx), Music: true, Audio: true, MusicBrainz: true, YouTube: s.youtubeAvailable(ctx), Movies: true, Series: true, Metadata: true, Playback: true, GPU: true, Transcoding: encoding.Mode == "nvidia"}}, err)
+		return out(SystemDTO{Name: general.ServerName, Version: "0.1.0", SetupRequired: n == 0, Capabilities: Capabilities{AutoSubtitles: s.Config.SubtitleDownloads && s.Config.OpenSubtitlesKey != "" && autoReady, OpenSubtitles: s.openSubtitlesAvailable(ctx), Music: true, Audio: true, MusicBrainz: true, YouTube: s.youtubeAvailable(ctx), Movies: true, Series: true, Metadata: true, Playback: true, GPU: true, Transcoding: encoding.Mode == "nvidia"}}, err)
 	})
 	route.Get(r, op("/health", "getHealth", ""), func(ctx context.Context, _ route.Input[route.Empty, route.Empty, route.Empty]) (route.Output[HealthDTO], error) {
 		if s.Pool == nil || s.Pool.Ping(ctx) != nil {
@@ -190,6 +195,7 @@ func (s *Server) register() {
 		for _, j := range jobs {
 			d := jobDTO(j.Job)
 			d.ResourceName, d.ItemID, d.LibraryID = j.ResourceName, j.ItemID, j.LibraryID
+			d.ErrorDetail, d.ErrorStage = j.ErrorDetail, j.ErrorStage
 			v.Items = append(v.Items, d)
 		}
 		return out(v, e)
@@ -226,6 +232,7 @@ func (s *Server) register() {
 	s.recommendationRoutes()
 	s.subtitleRoutes()
 	s.openSubtitleRoutes()
+	s.autoSubtitleRoutes()
 	s.subtitleTimingRoutes()
 	s.subtitleSyncRoutes()
 }

@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	ctx, cancel, cfg, pool, e := rt.Start()
+	ctx, cancel, cfg, pool, e := rt.Start("downloader")
 	defer cancel()
 	if e != nil {
 		log.Fatal().Err(e).Msg("database unavailable")

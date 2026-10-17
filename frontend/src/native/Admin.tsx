@@ -49,7 +49,8 @@ import { api, result, useAuth, useResource, type DTO } from './api';
 import { Confirm, State, mutate } from './shared';
 import GeneralSettings from './GeneralSettings';
 import Recommendations from './Recommendations';
-import { audioErrorKey } from './audio-errors';
+import { LibraryAutomaticSubtitles, SubtitleProviderSettings } from './AutomaticSubtitles';
+import Jobs from './Jobs';
 export default function Admin() {
   const { t } = useTranslation();
   const { tab = 'libraries' } = useParams();
@@ -80,7 +81,10 @@ export default function Admin() {
           className={`settings-panel admin-panel ${tab === 'libraries' ? 'library-management-panel' : ''}`}
         >
           {tab === 'general' ? (
-            <GeneralSettings />
+            <Stack gap="xl">
+              <GeneralSettings />
+              <SubtitleProviderSettings />
+            </Stack>
           ) : tab === 'recommendations' ? (
             <Recommendations />
           ) : tab === 'users' ? (
@@ -303,6 +307,7 @@ function LibraryEntry({
           </strong>
         </div>
       </div>
+      {(l.kind === 'movies' || l.kind === 'series') && <LibraryAutomaticSubtitles library={l} />}
       <div className="managed-library-paths">
         <span className="managed-library-paths-label">
           <Folder size={14} />
@@ -952,9 +957,11 @@ function SubtitleRendering() {
     result(await api.GET('/api/v1/admin/encoding', { signal })),
   );
   return (
-    <State loading={data.isLoading} error={data.error}>
-      {data.data && <SubtitleRenderingForm initial={data.data} />}
-    </State>
+    <Stack gap="xl">
+      <State loading={data.isLoading} error={data.error}>
+        {data.data && <SubtitleRenderingForm initial={data.data} />}
+      </State>
+    </Stack>
   );
 }
 function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
@@ -1058,178 +1065,6 @@ function SubtitleRenderingForm({ initial }: { initial: DTO<'EncodingDTO'> }) {
         </Stack>
       </fieldset>
     </form>
-  );
-}
-function Jobs() {
-  const { t } = useTranslation();
-  const [search, setSearch] = useState('');
-  const [state, setState] = useState('all');
-  const [role, setRole] = useState('scanner');
-  const libraries = useResource(
-    'libraries',
-    async (signal) => result(await api.GET('/api/v1/libraries', { signal })),
-    true,
-    10000,
-  );
-  const jobs = useResource(
-    'jobs',
-    async (signal) => result(await api.GET('/api/v1/admin/jobs', { signal })),
-    true,
-    3000,
-  );
-  const visible =
-    jobs.data?.items.filter(
-      (j) =>
-        j.role === role &&
-        (state === 'all' || j.state === state) &&
-        `${j.resourceName} ${j.resourceId}`.toLowerCase().includes(search.toLowerCase()),
-    ) ?? [];
-  return (
-    <Stack>
-      <section className="task-schedules">
-        <h2>{t('libraryAdmin.schedule')}</h2>
-        <State loading={libraries.isLoading} error={libraries.error}>
-          {libraries.data?.items.map((l) => (
-            <div className="task-schedule" key={l.id}>
-              <Link to={`/library/${l.id}`}>{l.name}</Link>
-              <span>
-                {l.scanIntervalHours > 0
-                  ? t('libraryAdmin.everyHours', { count: l.scanIntervalHours })
-                  : t('libraryAdmin.manual')}
-              </span>
-              <small>
-                {t('libraryAdmin.lastScan')}:{' '}
-                {new Date(l.lastScanAt).getFullYear() > 1970
-                  ? new Date(l.lastScanAt).toLocaleString()
-                  : t('libraryAdmin.never')}
-              </small>
-            </div>
-          ))}
-        </State>
-      </section>
-      <div className="admin-section-heading">
-        <span className="eyebrow">{t('tasksAdmin.eyebrow')}</span>
-        <h2>{t('manage.tasks')}</h2>
-        <p>{t('tasksAdmin.description')}</p>
-      </div>
-      <Tabs
-        value={role}
-        onChange={(next) => setRole(next ?? 'scanner')}
-        className="task-process-tabs"
-      >
-        <Tabs.List grow>
-          {['scanner', 'transcoder', 'downloader'].map((process) => (
-            <Tabs.Tab key={process} value={process}>
-              {t(`tasksAdmin.process.${process}`)}
-              <Badge variant="light" ml={6} size="sm">
-                {jobs.data?.items.filter((j) => j.role === process).length ?? 0}
-              </Badge>
-            </Tabs.Tab>
-          ))}
-        </Tabs.List>
-      </Tabs>
-      <Group className="task-list-controls">
-        <TextInput
-          className="admin-search"
-          leftSection={<Search size={16} />}
-          aria-label={t('tasksAdmin.search')}
-          placeholder={t('tasksAdmin.search')}
-          value={search}
-          onChange={(e) => setSearch(e.currentTarget.value)}
-        />
-        <Select
-          aria-label={t('tasksAdmin.status')}
-          allowDeselect={false}
-          value={state}
-          onChange={(v) => setState(v ?? 'all')}
-          data={['all', 'pending', 'running', 'completed', 'failed', 'cancelled'].map((s) => ({
-            value: s,
-            label: t(s === 'all' ? 'tasksAdmin.all' : `native.state.${s}`),
-          }))}
-        />
-      </Group>
-      <State loading={jobs.isLoading} error={jobs.error}>
-        <div className="task-list">
-          {visible.map((j) => (
-            <TaskCard key={j.id} job={j} />
-          ))}
-          {!visible.length && <p className="muted">{t('tasksAdmin.empty')}</p>}
-        </div>
-      </State>
-    </Stack>
-  );
-}
-function TaskCard({ job }: { job: DTO<'JobDTO'> }) {
-  const { t } = useTranslation();
-  const target = job.resourceName || job.resourceId;
-  const targetNode = job.itemId ? (
-    <Link to={`/item/${job.itemId}`}>
-      {target}
-      <ArrowUpRight size={15} />
-    </Link>
-  ) : job.libraryId ? (
-    <Link to={`/library/${job.libraryId}`}>
-      {target}
-      <ArrowUpRight size={15} />
-    </Link>
-  ) : (
-    <strong>{target}</strong>
-  );
-  const error =
-    job.error === 'Metadata match is ambiguous or missing; identify this item manually'
-      ? t('metadata.ambiguous')
-      : job.error === 'TMDB_TOKEN not configured'
-        ? t('metadata.providerUnavailable')
-        : ['youtube_preview', 'youtube_download', 'audio_tags'].includes(job.kind)
-          ? t(audioErrorKey(job.error))
-          : job.kind === 'subtitle_sync' && job.error
-            ? t(
-                `subtitleEditor.reason.${job.error.startsWith('subtitle_') || ['disabled', 'permission', 'read_only', 'hardlinked'].includes(job.error) ? job.error : 'subtitle_job_failed'}`,
-              )
-            : job.error;
-  return (
-    <article className="task-card">
-      <div className="task-main">
-        <div>
-          <span className="task-kind">{t(`native.job.${job.kind}`)}</span>
-          {targetNode}
-          <small>{new Date(job.updatedAt).toLocaleString()}</small>
-        </div>
-        <Badge color={job.state === 'failed' ? 'red' : job.state === 'running' ? 'blue' : 'gray'}>
-          {t(`native.state.${job.state}`)}
-        </Badge>
-      </div>
-      {job.kind === 'scan' && (
-        <div className="task-progress">
-          <span>
-            {job.processedFiles}/{job.totalFiles}
-          </span>
-          <Progress value={job.progress} animated={job.state === 'running'} />
-        </div>
-      )}
-      {error && <Alert color="red">{error}</Alert>}
-      {job.cancelRequested && job.state === 'running' && (
-        <Alert color="orange">{t('tasksAdmin.cancelling')}</Alert>
-      )}
-      {['pending', 'running'].includes(job.state) && (
-        <Button
-          size="compact-sm"
-          variant="subtle"
-          disabled={job.cancelRequested}
-          onClick={() =>
-            void mutate(async () =>
-              result(
-                await api.POST('/api/v1/admin/jobs/{id}/cancel', {
-                  params: { path: { id: job.id } },
-                }),
-              ),
-            )
-          }
-        >
-          {t('cancel')}
-        </Button>
-      )}
-    </article>
   );
 }
 export function MetadataEditor({

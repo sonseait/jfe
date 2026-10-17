@@ -223,6 +223,7 @@ func (s *Server) enqueueSubtitle(ctx context.Context, file string, track int, ac
 	if e = tx.Commit(ctx); e != nil {
 		return JobDTO{}, e
 	}
+	logQueued(ctx, jobDTO(j))
 	return jobDTO(j), nil
 }
 func (s *Server) subtitleSyncRoutes() {

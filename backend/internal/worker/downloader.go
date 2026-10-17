@@ -57,6 +57,7 @@ func (w *Worker) youtubeJob(ctx context.Context, j store.Job) error {
 		return errors.New("import root is not configured")
 	}
 	if j.Kind == "youtube_preview" {
+		jobStage(ctx, "youtube_preview")
 		listing, e := audio.PreviewYouTube(ctx, source.Url)
 		if e != nil {
 			return e
@@ -125,7 +126,7 @@ func (w *Worker) youtubeJob(ctx context.Context, j store.Job) error {
 			if message == "" {
 				message = audio.ErrYouTubeRequest.Error()
 			}
-			log.Error().Err(e).Str("jobId", j.ID).Str("sourceId", source.ID).
+			log.Ctx(ctx).Error().Err(e).Str("jobId", j.ID).Str("sourceId", source.ID).
 				Str("videoId", entry.VideoID).Str("errorCode", message).Msg("YouTube entry download failed")
 		}
 		if e = w.DB.SetImportEntry(ctx, store.SetImportEntryParams{SourceID: source.ID, VideoID: entry.VideoID, State: state, Error: message}); e != nil {
@@ -146,6 +147,10 @@ func (w *Worker) youtubeJob(ctx context.Context, j store.Job) error {
 	return nil
 }
 func (w *Worker) downloadEntry(ctx context.Context, j store.Job, s store.ImportSource, entry store.ImportEntry, settings DownloadSettings) error {
+	logger := log.Ctx(ctx).With().Str("videoId", entry.VideoID).Str("videoTitle", entry.Title).Logger()
+	ctx = logger.WithContext(ctx)
+	jobStage(ctx, "download_youtube_audio")
+	log.Ctx(ctx).Info().Msg("YouTube entry download started")
 	unlock, e := audio.Lock(ctx, w.Config.CacheRoot, "youtube:"+s.LibraryID+":"+entry.VideoID)
 	if e != nil {
 		return e
@@ -227,6 +232,8 @@ func (w *Worker) downloadEntry(ctx context.Context, j store.Job, s store.ImportS
 		_ = os.Remove(path)
 		path = out
 	}
+	jobFile(ctx, path)
+	jobStage(ctx, "probe_downloaded_audio")
 	probe, e := media.Inspect(runCtx, path)
 	if e != nil {
 		return fmt.Errorf("probe downloaded audio: %w", e)
@@ -298,6 +305,7 @@ func (w *Worker) downloadEntry(ctx context.Context, j store.Job, s store.ImportS
 	if _, e = media.Within(root, filepath.Dir(dest)); e != nil {
 		return e
 	}
+	jobStage(ctx, "publish_youtube_audio")
 	if e = os.Rename(stage, dest); e != nil {
 		return e
 	}
@@ -321,6 +329,7 @@ func (w *Worker) recordImport(ctx context.Context, s store.ImportSource, entry s
 func (w *Worker) scheduleDownloads(ctx context.Context) {
 	sources, e := w.DB.DueImportSources(ctx)
 	if e != nil {
+		log.Ctx(ctx).Error().Err(e).Str("operation", "due_import_sources").Msg("YouTube scheduling failed")
 		return
 	}
 	for _, s := range sources {
@@ -328,8 +337,10 @@ func (w *Worker) scheduleDownloads(ctx context.Context) {
 			continue
 		}
 		_, e = w.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "downloader", Kind: "youtube_preview", ResourceID: s.ID, Payload: []byte("{}")})
-		if e == nil {
-			_ = w.DB.ScheduleImportSource(ctx, store.ScheduleImportSourceParams{ID: s.ID})
+		if e != nil {
+			log.Ctx(ctx).Error().Err(e).Str("sourceId", s.ID).Str("libraryId", s.LibraryID).Msg("YouTube sync enqueue failed")
+		} else if e = w.DB.ScheduleImportSource(ctx, store.ScheduleImportSourceParams{ID: s.ID}); e != nil {
+			log.Ctx(ctx).Error().Err(e).Str("sourceId", s.ID).Msg("could not advance YouTube sync schedule")
 		}
 	}
 }

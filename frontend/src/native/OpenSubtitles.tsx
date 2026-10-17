@@ -4,7 +4,6 @@ import {
   Button,
   Group,
   Loader,
-  Menu,
   Modal,
   ScrollArea,
   Select,
@@ -19,11 +18,11 @@ import { api, result, useResource, type DTO } from './api';
 
 export function OpenSubtitles({
   fileId,
-  portalTarget,
+  fileName,
   onDownloaded,
 }: {
   fileId: string;
-  portalTarget?: HTMLElement;
+  fileName: string;
   onDownloaded: (id: string) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation();
@@ -103,7 +102,8 @@ export function OpenSubtitles({
   };
   return (
     <>
-      <Menu.Item
+      <Button
+        variant="default"
         leftSection={<Search size={15} />}
         onClick={() => {
           setOpened(true);
@@ -111,16 +111,19 @@ export function OpenSubtitles({
         }}
       >
         {t('openSub.search')}
-      </Menu.Item>
+      </Button>
       <Modal
         opened={opened}
         onClose={() => setOpened(false)}
         title={t('openSub.search')}
-        size="lg"
+        size="min(1100px, calc(100vw - 32px))"
+        className="opensubtitles-modal"
         scrollAreaComponent={ScrollArea.Autosize}
-        portalProps={{ target: portalTarget }}
       >
         <Stack>
+          <Text size="sm" fw={500} style={{ overflowWrap: 'anywhere' }}>
+            {fileName}
+          </Text>
           <Text size="sm" c="dimmed">
             {t('openSub.help')}
           </Text>
@@ -144,6 +147,7 @@ export function OpenSubtitles({
               />
               <Group align="end">
                 <Select
+                  className="opensubtitles-language"
                   label={t('language')}
                   value={language}
                   allowDeselect={false}
@@ -153,7 +157,12 @@ export function OpenSubtitles({
                   ]}
                   onChange={(value) => setLanguage(value === 'vi' ? 'vi' : 'en')}
                 />
-                <Button type="submit" leftSection={<Search size={15} />} loading={data.isFetching}>
+                <Button
+                  type="submit"
+                  className="opensubtitles-search-button"
+                  leftSection={<Search size={15} />}
+                  loading={data.isFetching}
+                >
                   {t('search')}
                 </Button>
               </Group>
@@ -166,10 +175,16 @@ export function OpenSubtitles({
             </Group>
           )}
           {data.error && <Alert color="red">{t('openSub.searchFailed')}</Alert>}
+          {data.data?.searchTitle && (
+            <Text size="sm" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+              {t('openSub.searchTarget', { title: data.data.searchTitle })}
+              {data.data.searchYear > 0 ? ` (${data.data.searchYear})` : ''}
+            </Text>
+          )}
           {data.data?.items.length === 0 && <Text c="dimmed">{t('openSub.empty')}</Text>}
           {data.data?.items.map((file) => (
-            <Group key={file.fileId} wrap="nowrap" justify="space-between" align="start">
-              <Stack gap={2} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            <div key={file.fileId} className="opensubtitles-result">
+              <Stack gap={2} className="opensubtitles-result-details">
                 <Text fw={500}>{file.release || file.name}</Text>
                 <Text size="sm" c="dimmed">
                   {file.name}
@@ -182,13 +197,14 @@ export function OpenSubtitles({
               </Stack>
               <Button
                 size="xs"
+                className="opensubtitles-download-button"
                 disabled={busy}
                 leftSection={<Download size={14} />}
                 onClick={() => void download(file)}
               >
-                {t('openSub.use')}
+                {t('openSub.download')}
               </Button>
-            </Group>
+            </div>
           ))}
         </Stack>
       </Modal>

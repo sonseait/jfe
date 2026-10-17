@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/audio"
 	"jfe/backend/internal/media"
 	"jfe/backend/internal/route"
@@ -20,8 +21,15 @@ import (
 )
 
 func (s *Server) libraryDTO(ctx context.Context, l store.Library) (LibraryDTO, error) {
-	d := LibraryDTO{ID: l.ID, Name: l.Name, Kind: l.Kind, Paths: l.Paths, ScanIntervalHours: int(l.ScanIntervalHours), LastScanAt: l.LastScanAt}
+	d := LibraryDTO{AutoSubtitles: l.AutoSubtitles, ID: l.ID, Name: l.Name, Kind: l.Kind, Paths: l.Paths, ScanIntervalHours: int(l.ScanIntervalHours), LastScanAt: l.LastScanAt}
 	var err error
+	if l.AutoSubtitles {
+		counts, e := s.DB.AutoSubtitleCounts(ctx, l.ID)
+		if e != nil {
+			return d, e
+		}
+		d.MissingSubtitles = counts.Missing
+	}
 	d.FileCount, err = s.DB.LibraryFileCount(ctx, l.ID)
 	if err != nil {
 		return d, err
@@ -40,12 +48,18 @@ func (s *Server) libraryDTO(ctx context.Context, l store.Library) (LibraryDTO, e
 func jobDTO(j store.Job) JobDTO {
 	return JobDTO{Role: j.Role, Attempts: int(j.Attempts), CancelRequested: j.CancelRequested, UpdatedAt: j.UpdatedAt, ID: j.ID, Kind: j.Kind, ResourceID: j.ResourceID, State: j.State, Progress: int(j.Progress), Error: j.Error, CreatedAt: j.CreatedAt, TotalFiles: int(j.TotalFiles), ProcessedFiles: int(j.ProcessedFiles)}
 }
+func logQueued(ctx context.Context, j JobDTO) {
+	log.Ctx(ctx).Info().Str("jobId", j.ID).Str("workerRole", j.Role).Str("kind", j.Kind).Str("resourceId", j.ResourceID).Str("state", j.State).Msg("job queued")
+}
 func (s *Server) enqueue(ctx context.Context, role, kind, id string, payload any) (JobDTO, error) {
 	b := []byte("{}")
 	if payload != nil {
 		b, _ = json.Marshal(payload)
 	}
 	j, e := s.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: role, Kind: kind, ResourceID: id, Payload: b})
+	if e == nil {
+		logQueued(ctx, jobDTO(j))
+	}
 	return jobDTO(j), e
 }
 func (s *Server) saveLibrary(ctx context.Context, id string, b LibraryRequest) (LibraryDTO, error) {

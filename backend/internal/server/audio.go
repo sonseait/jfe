@@ -233,7 +233,13 @@ func (s *Server) audioRoutes() {
 			}
 			v.Items = append(v.Items, jobDTO(j))
 		}
-		return out(v, tx.Commit(ctx))
+		if e = tx.Commit(ctx); e != nil {
+			return out(v, e)
+		}
+		for _, j := range v.Items {
+			logQueued(ctx, j)
+		}
+		return out(v, nil)
 	})
 	route.Get(r, op("/audio/jobs", "listAudioJobs", "user"), func(ctx context.Context, _ route.Input[route.Empty, route.Empty, route.Empty]) (route.Output[JobsDTO], error) {
 		rows, e := s.DB.ListAudioJobs(ctx, route.User(ctx).ID)
@@ -288,13 +294,14 @@ func (s *Server) audioRoutes() {
 		if e != nil {
 			return out(ImportSourceDTO{}, e)
 		}
-		_, e = q.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "downloader", Kind: "youtube_preview", ResourceID: v.ID, Payload: []byte("{}")})
+		j, e := q.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "downloader", Kind: "youtube_preview", ResourceID: v.ID, Payload: []byte("{}")})
 		if e != nil {
 			return out(ImportSourceDTO{}, e)
 		}
 		if e = tx.Commit(ctx); e != nil {
 			return out(ImportSourceDTO{}, e)
 		}
+		logQueued(ctx, jobDTO(j))
 		d, e := s.sourceDTO(ctx, v)
 		return out(d, e)
 	})

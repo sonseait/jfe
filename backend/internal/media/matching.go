@@ -30,7 +30,7 @@ type Match struct {
 
 // SearchMetadata accepts a title or a release filename, retaining the parsed year.
 func SearchMetadata(ctx context.Context, token, search, kind string, year int, language string) ([]Match, string, int, error) {
-	title, year := metadataQuery(search, year)
+	title, year := MetadataQuery(search, year)
 	if kind == "series" {
 		kind = "tv"
 	}
@@ -70,7 +70,8 @@ func searchMetadataLanguage(ctx context.Context, token, title, kind, language st
 	return result.Results, err
 }
 
-func metadataQuery(search string, year int) (string, int) {
+// MetadataQuery extracts a search title/year from a filename or metadata text.
+func MetadataQuery(search string, year int) (string, int) {
 	title := strings.TrimSpace(search)
 	if IsVideo(title) {
 		n := Parse(title)
@@ -82,7 +83,13 @@ func metadataQuery(search string, year int) (string, int) {
 			year = n.Year
 		}
 	}
-	return title, year
+	return CleanSearchTitle(title), year
+}
+
+// SameTitle compares complete titles, ignoring accents, case and punctuation.
+func SameTitle(a, b string) bool {
+	a, b = normalizedTitle(a), normalizedTitle(b)
+	return a != "" && a == b
 }
 
 func normalizedTitle(title string) string {

@@ -4499,3 +4499,163 @@ body:has(.audio-dock) .app-content {
   gap: 4px;
   margin-top: auto;
 }
+
+.library-auto-subtitles {
+  padding: 18px 22px;
+  border-top: 1px solid var(--mantine-color-dark-4);
+}
+.auto-subtitle-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mantine-color-dark-4);
+}
+
+.job-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.job-summary button {
+  padding: 18px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.job-summary button.active {
+  border-color: var(--mantine-primary-color-filled);
+}
+.job-summary strong {
+  font-size: 25px;
+  font-weight: 500;
+}
+.job-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.job-schedules h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.job-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: 12px;
+}
+.job-schedule-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.job-schedule-card a {
+  overflow-wrap: anywhere;
+}
+.job-schedule-card > button {
+  justify-self: start;
+}
+.job-executions > h3 {
+  margin-top: 0;
+}
+.job-log-list {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.job-log-entry {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  overflow-wrap: anywhere;
+}
+.job-log-entry:last-child {
+  border-bottom: 0;
+}
+.job-log-entry.log-error {
+  border-left-color: var(--mantine-color-red-6);
+}
+.job-log-entry.log-warn {
+  border-left-color: var(--mantine-color-orange-6);
+}
+.job-log-entry time,
+.job-log-entry code {
+  font-size: 11px;
+  color: var(--muted);
+}
+.job-log-entry > .mantine-Group-root {
+  margin-bottom: 6px;
+}
+.job-log-entry summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.job-log-entry dl {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.job-log-entry dl > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr);
+  gap: 12px;
+  padding: 4px 0;
+}
+.job-log-entry dt {
+  color: var(--muted);
+}
+.opensubtitles-modal .mantine-ScrollArea-content {
+  display: block;
+  min-width: 0;
+}
+.opensubtitles-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.opensubtitles-result-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.opensubtitles-download-button,
+.opensubtitles-search-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.opensubtitles-language {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.job-log-entry dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+@media (max-width: 640px) {
+  .opensubtitles-result {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+  .opensubtitles-download-button {
+    justify-self: start;
+  }
+  .job-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .job-summary button {
+    padding: 14px;
+  }
+  .library-auto-subtitles {
+    padding: 16px;
+  }
+}

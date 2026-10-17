@@ -20,6 +20,7 @@ import (
 )
 
 func (w *Worker) scanAudio(ctx context.Context, l store.Library, report func(int, int) error) error {
+	jobStage(ctx, "discover_audio")
 	roots := append([]string{}, l.Paths...)
 	if w.Config.ImportRoot != "" {
 		if st, e := os.Stat(w.Config.ImportRoot); e != nil || !st.IsDir() {
@@ -71,6 +72,8 @@ func (w *Worker) scanAudio(ctx context.Context, l store.Library, report func(int
 		return e
 	}
 	for n, path := range paths {
+		jobFile(ctx, path)
+		jobStage(ctx, "index_audio")
 		unlock, e := audio.Lock(ctx, w.Config.CacheRoot, path)
 		if e != nil {
 			return e
@@ -282,6 +285,7 @@ func audioDigest(ctx context.Context, path string) (string, error) {
 	return string(b), nil
 }
 func (w *Worker) writeAudioTags(ctx context.Context, j store.Job) error {
+	jobStage(ctx, "prepare_audio_tags")
 	t, e := w.DB.GetTagJob(ctx, j.ID)
 	if e != nil {
 		return e
@@ -324,6 +328,7 @@ func (w *Worker) writeAudioTags(ctx context.Context, j store.Job) error {
 	prepared, _ := os.ReadFile(journal)
 	published := len(prepared) > 0 && current == string(prepared)
 	if !published {
+		jobStage(ctx, "write_audio_tags")
 		if current != t.Fingerprint {
 			return errors.New("file changed; reload tags before retrying")
 		}
@@ -411,6 +416,7 @@ func (w *Worker) writeAudioTags(ctx context.Context, j store.Job) error {
 		if check != current {
 			return errors.New("file changed during tagging")
 		}
+		jobStage(ctx, "publish_audio_tags")
 		if e = os.Rename(tmp, path); e != nil {
 			return e
 		}

@@ -27,7 +27,6 @@ import {
   saveFilmPreferences,
   type FilmPreferences,
 } from './playback-preferences';
-import { OpenSubtitles } from './OpenSubtitles';
 import { playbackCapabilities } from './playback-support';
 import { playRemux, RemuxDecodeError } from './remux-player';
 import { createAdaptiveBuffer, INITIAL_BUFFER_CONFIG } from './playback-buffer';
@@ -961,19 +960,6 @@ function Surface() {
                       />
                     ) : (
                       <span>{t('native.transcodingDisabled')}</span>
-                    )}
-                    {canTranscode && system.data?.capabilities.openSubtitles && (
-                      <OpenSubtitles
-                        fileId={file.id}
-                        portalTarget={wrapper.current ?? undefined}
-                        onDownloaded={async (id) => {
-                          await subtitles.refetch();
-                          restart(() => {
-                            setSubtitle(`upload:${id}`);
-                            remember({ subtitle: `upload:${id}` });
-                          });
-                        }}
-                      />
                     )}
                     {subtitles.data?.items.find((sub) => sub.id === uploadedId)?.uploaded && (
                       <UploadedSubtitleDelete

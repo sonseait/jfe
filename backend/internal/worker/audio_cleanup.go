@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"jfe/backend/internal/audio"
 	"jfe/backend/internal/media"
 	"jfe/backend/internal/store"
@@ -42,7 +43,9 @@ func (w *Worker) cleanupAudio(ctx context.Context) {
 			}
 			safe, e := media.Within(dir, filepath.Join(dir, name))
 			if e == nil {
-				_ = os.RemoveAll(safe)
+				if e = os.RemoveAll(safe); e != nil {
+					log.Ctx(ctx).Warn().Err(e).Str("jobId", id).Msg("could not remove abandoned download staging")
+				}
 			}
 		}
 		return
@@ -52,6 +55,9 @@ func (w *Worker) cleanupAudio(ctx context.Context) {
 	}
 	jobs, e := w.DB.AbandonedTagJobs(ctx)
 	if e != nil {
+		if ctx.Err() == nil {
+			log.Ctx(ctx).Error().Err(e).Str("operation", "list_abandoned_tag_jobs").Msg("audio tag recovery failed")
+		}
 		return
 	}
 	for _, j := range jobs {
@@ -84,6 +90,7 @@ func (w *Worker) cleanupAudio(ctx context.Context) {
 						return
 					}
 					if e = w.indexAudio(ctx, library, path); e != nil {
+						log.Ctx(ctx).Error().Err(e).Str("jobId", j.ID).Str("fileId", j.FileID).Msg("could not reindex recovered audio tags")
 						return
 					}
 				}
@@ -91,7 +98,9 @@ func (w *Worker) cleanupAudio(ctx context.Context) {
 			_ = os.Remove(base + filepath.Ext(path))
 			_ = os.Remove(base + ".json")
 			_ = os.Remove(base + ".json.tmp")
-			_ = w.DB.SetTagPhase(ctx, store.SetTagPhaseParams{ID: j.ID, Phase: "abandoned"})
+			if e = w.DB.SetTagPhase(ctx, store.SetTagPhaseParams{ID: j.ID, Phase: "abandoned"}); e != nil {
+				log.Ctx(ctx).Error().Err(e).Str("jobId", j.ID).Msg("could not save audio tag recovery phase")
+			}
 		}()
 	}
 }

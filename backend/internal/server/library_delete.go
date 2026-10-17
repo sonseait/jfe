@@ -44,6 +44,13 @@ func (s *Server) deleteLibraryWithSubtitleGuard(ctx context.Context, id string) 
 	if busy {
 		return route.Fail(409, "Finish or recover original subtitle operations before removing this library")
 	}
+	busy, e = q.AutoSubtitleLibraryBusy(ctx, id)
+	if e != nil {
+		return e
+	}
+	if busy {
+		return route.Fail(409, "Finish or recover automatic subtitle publications before removing this library")
+	}
 	if e = q.DeleteLibrary(ctx, id); e != nil {
 		return e
 	}

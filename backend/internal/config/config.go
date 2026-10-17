@@ -10,6 +10,8 @@ import (
 type Config struct {
 	GeminiKey, GeminiModel                               string
 	OpenSubtitlesKey, OpenSubtitlesToken                 string
+	OpenSubtitlesUsername, OpenSubtitlesPassword         string
+	SubtitleDownloads                                    bool
 	DatabaseURL, Listen, MediaRoot, CacheRoot, TMDBToken string
 	LogLevel, LogFormat                                  string
 	Concurrency                                          int
@@ -37,6 +39,9 @@ func Load() (Config, error) {
 	v.SetDefault("GEMINI_MODEL", "gemini-3.5-flash-lite")
 	v.SetDefault("OPENSUBTITLES_API_KEY", "")
 	v.SetDefault("OPENSUBTITLES_TOKEN", "")
+	v.SetDefault("OPENSUBTITLES_USERNAME", "")
+	v.SetDefault("OPENSUBTITLES_PASSWORD", "")
+	v.SetDefault("JFE_SUBTITLE_DOWNLOADS", false)
 	v.SetDefault("JFE_LOG_LEVEL", "info")
 	v.SetDefault("JFE_LOG_FORMAT", "json")
 	if err := v.ReadInConfig(); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -50,8 +55,10 @@ func Load() (Config, error) {
 	return Config{
 		GeminiKey: v.GetString("GEMINI_API_KEY"), GeminiModel: v.GetString("GEMINI_MODEL"),
 		OpenSubtitlesKey: v.GetString("OPENSUBTITLES_API_KEY"), OpenSubtitlesToken: v.GetString("OPENSUBTITLES_TOKEN"),
-		SubtitleEditing: v.GetBool("JFE_SUBTITLE_EDITING"),
-		ImportRoot:      v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),
+		OpenSubtitlesUsername: v.GetString("OPENSUBTITLES_USERNAME"), OpenSubtitlesPassword: v.GetString("OPENSUBTITLES_PASSWORD"),
+		SubtitleDownloads: v.GetBool("JFE_SUBTITLE_DOWNLOADS"),
+		SubtitleEditing:   v.GetBool("JFE_SUBTITLE_EDITING"),
+		ImportRoot:        v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),
 		DatabaseURL: v.GetString("DATABASE_URL"), Listen: v.GetString("JFE_LISTEN"),
 		MediaRoot: v.GetString("JFE_MEDIA_ROOT"), CacheRoot: v.GetString("JFE_CACHE_ROOT"),
 		TMDBToken: v.GetString("TMDB_TOKEN"), Concurrency: n,

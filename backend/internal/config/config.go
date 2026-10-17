@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	GeminiKey, GeminiModel                               string
 	OpenSubtitlesKey, OpenSubtitlesToken                 string
 	DatabaseURL, Listen, MediaRoot, CacheRoot, TMDBToken string
 	LogLevel, LogFormat                                  string
@@ -32,6 +33,8 @@ func Load() (Config, error) {
 	v.SetDefault("JFE_PYTHON", "python3")
 	v.SetDefault("JFE_SUBTITLE_EDITING", false)
 	v.SetDefault("TMDB_TOKEN", "")
+	v.SetDefault("GEMINI_API_KEY", "")
+	v.SetDefault("GEMINI_MODEL", "gemini-3.5-flash-lite")
 	v.SetDefault("OPENSUBTITLES_API_KEY", "")
 	v.SetDefault("OPENSUBTITLES_TOKEN", "")
 	v.SetDefault("JFE_LOG_LEVEL", "info")
@@ -45,6 +48,7 @@ func Load() (Config, error) {
 		n = 1
 	}
 	return Config{
+		GeminiKey: v.GetString("GEMINI_API_KEY"), GeminiModel: v.GetString("GEMINI_MODEL"),
 		OpenSubtitlesKey: v.GetString("OPENSUBTITLES_API_KEY"), OpenSubtitlesToken: v.GetString("OPENSUBTITLES_TOKEN"),
 		SubtitleEditing: v.GetBool("JFE_SUBTITLE_EDITING"),
 		ImportRoot:      v.GetString("JFE_IMPORT_ROOT"), Python: v.GetString("JFE_PYTHON"),

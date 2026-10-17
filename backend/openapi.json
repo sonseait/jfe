@@ -788,6 +788,266 @@
         ]
       }
     },
+    "/api/v1/admin/recommendations": {
+      "get": {
+        "operationId": "getRecommendations",
+        "summary": "getRecommendations",
+        "tags": [
+          "jfe"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationStatusDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "generateRecommendations",
+        "summary": "generateRecommendations",
+        "tags": [
+          "jfe"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationsDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Requested Range Not Satisfiable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/settings": {
       "get": {
         "operationId": "getGeneralSettings",
@@ -10619,6 +10879,41 @@
         ],
         "type": "object"
       },
+      "MovieRecommendationDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "originalTitle": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "relatedTitles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdbId": {
+            "type": "integer"
+          },
+          "year": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tmdbId",
+          "title",
+          "originalTitle",
+          "year",
+          "reason",
+          "relatedTitles"
+        ],
+        "type": "object"
+      },
       "MusicMatchDTO": {
         "additionalProperties": false,
         "properties": {
@@ -11105,6 +11400,90 @@
         "required": [
           "sequence",
           "position"
+        ],
+        "type": "object"
+      },
+      "RecommendationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "focus": {
+            "enum": [
+              "mixed",
+              "missing",
+              "discover"
+            ],
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "en-US",
+              "vi-VN"
+            ],
+            "type": "string"
+          },
+          "preferences": {
+            "maxLength": 1000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "focus",
+          "language",
+          "preferences"
+        ],
+        "type": "object"
+      },
+      "RecommendationStatusDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "geminiConfigured": {
+            "type": "boolean"
+          },
+          "last": {
+            "$ref": "#/components/schemas/RecommendationsDTO"
+          },
+          "tmdbConfigured": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "geminiConfigured",
+          "tmdbConfigured"
+        ],
+        "type": "object"
+      },
+      "RecommendationsDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "analyzedCount": {
+            "type": "integer"
+          },
+          "catalogCount": {
+            "type": "integer"
+          },
+          "focus": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "movies": {
+            "items": {
+              "$ref": "#/components/schemas/MovieRecommendationDTO"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "movies",
+          "catalogCount",
+          "analyzedCount",
+          "generatedAt",
+          "focus",
+          "language"
         ],
         "type": "object"
       },

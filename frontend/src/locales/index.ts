@@ -35,6 +35,67 @@ const strings: Record<string, [string, string]> = {
   'native.job.subtitle_download': ['OpenSubtitles download', 'Tải phụ đề OpenSubtitles'],
   ...adminStrings,
   ...audioStrings,
+  'ai.title': ['AI movie suggestions', 'Gợi ý phim AI'],
+  'ai.description': [
+    'Find missing installments and films related to your existing movie collection with Gemini.',
+    'Dùng Gemini để tìm phần phim còn thiếu và phim phù hợp với collection hiện có.',
+  ],
+  'ai.geminiReady': ['Gemini configured', 'Đã cấu hình Gemini'],
+  'ai.geminiMissing': ['Gemini not configured', 'Chưa cấu hình Gemini'],
+  'ai.tmdbReady': ['TMDB configured', 'Đã cấu hình TMDB'],
+  'ai.tmdbMissing': ['TMDB not configured', 'Chưa cấu hình TMDB'],
+  'ai.setup': [
+    'Configure GEMINI_API_KEY and TMDB_TOKEN in the API server environment, then restart API. GEMINI_MODEL is optional (default: gemini-3.5-flash-lite).',
+    'Cấu hình GEMINI_API_KEY và TMDB_TOKEN trong môi trường của API rồi khởi động lại API. GEMINI_MODEL là tùy chọn (mặc định: gemini-3.5-flash-lite).',
+  ],
+  'ai.focus': ['Suggestion priority', 'Ưu tiên gợi ý'],
+  'ai.focus.mixed': ['Missing installments & similar movies', 'Phần còn thiếu và phim tương tự'],
+  'ai.focus.missing': ['Missing franchise installments', 'Phần phim còn thiếu'],
+  'ai.focus.discover': ['Discover similar movies', 'Khám phá phim tương tự'],
+  'ai.preferences': ['Preferences (optional)', 'Sở thích (tùy chọn)'],
+  'ai.preferencesPlaceholder': [
+    'For example: Hong Kong action, science fiction, avoid horror…',
+    'Ví dụ: hành động Hong Kong, khoa học viễn tưởng, tránh phim kinh dị…',
+  ],
+  'ai.disclosure': [
+    'Generate sends movie titles, release years and these preferences to Google Gemini. No file paths, media files or viewing history are sent. Uses your Gemini API quota. Runs only when requested; no automatic downloads.',
+    'Bấm tạo sẽ gửi tên phim, năm phát hành và sở thích này đến Google Gemini. Không gửi đường dẫn, file media hay lịch sử xem. Sử dụng hạn mức API Gemini của bạn. Chỉ chạy khi được yêu cầu, không tự tải phim.',
+  ],
+  'ai.generate': ['Generate suggestions', 'Tạo gợi ý'],
+  'ai.generating': [
+    'Analyzing collection and checking TMDB…',
+    'Đang phân tích collection và kiểm tra TMDB…',
+  ],
+  'ai.rateLimited': [
+    'A request is already running or the request limit was reached. Wait a minute and try again.',
+    'Đang có yêu cầu xử lý hoặc đã đạt giới hạn. Đợi một phút rồi thử lại.',
+  ],
+  'ai.collectionRequired': [
+    'Add available movies first. Collections over 10,000 catalog entries are not supported yet.',
+    'Cần có phim khả dụng trong thư viện. Hiện chưa hỗ trợ collection trên 10.000 mục catalog.',
+  ],
+  'ai.failed': [
+    'Could not generate suggestions. Check Gemini credentials, model, quota, TMDB and server connectivity, then try again.',
+    'Không tạo được gợi ý. Kiểm tra API key, model, hạn mức Gemini, TMDB và kết nối máy chủ rồi thử lại.',
+  ],
+  'ai.summary': [
+    'Analyzed {{analyzed}} of {{total}} distinct movies',
+    'Đã phân tích {{analyzed}} / {{total}} phim riêng biệt',
+  ],
+  'ai.sampled': [
+    'A sample of up to 1,000 movies is sent to Gemini. Suggestions are checked against the entire available movie catalog.',
+    'Gửi mẫu tối đa 1.000 phim đến Gemini. Đề xuất được đối chiếu với toàn bộ catalog phim khả dụng.',
+  ],
+  'ai.review': [
+    'Results are saved as a shared admin snapshot. Titles and years are checked with TMDB; AI reasons and franchise gaps may be inaccurate. Review before downloading.',
+    'Kết quả được lưu chung cho admin tại thời điểm tạo. Tên và năm được kiểm tra với TMDB; lý do AI và phần phim còn thiếu có thể chưa chính xác. Kiểm tra lại trước khi tải.',
+  ],
+  'ai.empty': [
+    'No verified new suggestions this time. Try another priority or preferences.',
+    'Lần này không có gợi ý mới đủ điều kiện. Thử ưu tiên hoặc sở thích khác.',
+  ],
+  'ai.basedOn': ['Based on your movies', 'Dựa trên phim đã có'],
+  'ai.viewTMDB': ['View on TMDB', 'Xem trên TMDB'],
   'cast.connect': ['Cast', 'Phát qua Chromecast'],
   'cast.httpsRequired': [
     'Open JFE over HTTPS to use Chromecast.',
@@ -178,10 +239,10 @@ const strings: Record<string, [string, string]> = {
   ],
   'general.discard': ['Discard changes', 'Bỏ thay đổi'],
   'general.unsaved': ['Unsaved changes', 'Có thay đổi chưa lưu'],
-  'scan.forceMetadata': ['Force metadata refresh', 'Buộc cập nhật lại metadata'],
+  'scan.forceMetadata': ['Reset metadata', 'Reset metadata'],
   'scan.forceMetadataHelp': [
-    'Refresh local metadata and fetch TMDB again when configured. Locked metadata is preserved.',
-    'Đọc lại metadata cục bộ và tải lại TMDB nếu đã cấu hình. Metadata đã khóa vẫn được giữ nguyên.',
+    'Without reset, scans fetch only missing metadata and new episodes. Reset rereads local metadata and refreshes TMDB for the library when configured. Locked metadata is preserved.',
+    'Không reset: chỉ lấy metadata còn thiếu và tập mới. Reset: đọc lại metadata cục bộ và tải lại TMDB cho thư viện nếu đã cấu hình. Metadata đã khóa vẫn được giữ nguyên.',
   ],
   'cast.title': ['Cast', 'Dàn diễn viên'],
   'cast.unavailable': [

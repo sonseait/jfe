@@ -223,6 +223,7 @@ func (s *Server) register() {
 	s.audioRoutes()
 	s.playbackRoutes()
 	s.settingsRoutes()
+	s.recommendationRoutes()
 	s.subtitleRoutes()
 	s.openSubtitleRoutes()
 	s.subtitleTimingRoutes()

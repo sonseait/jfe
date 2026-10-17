@@ -54,10 +54,14 @@ export function groupTitles(items: DTO<'ItemDTO'>[], alphabetical = true): Title
     } else groups.set(key, { key, title: stem || item.title, items: [item] });
   }
   for (const group of groups.values()) {
-    if (alphabetical)
-      group.items.sort(
-        (a, b) => collator.compare(a.title, b.title) || a.year - b.year || a.id.localeCompare(b.id),
-      );
+    // Keep installments chronological regardless of the catalog's group order.
+    // Unknown production years follow dated entries.
+    group.items.sort(
+      (a, b) =>
+        (a.year > 0 ? a.year : Infinity) - (b.year > 0 ? b.year : Infinity) ||
+        collator.compare(a.title, b.title) ||
+        a.id.localeCompare(b.id),
+    );
     if (group.items.length > 1) {
       // Use the common display prefix instead of naming the group after one sequel.
       const labels = group.items.map((i) => titleStem(i.title).stem.split(/\s+/));

@@ -173,3 +173,56 @@ FFmpeg source decoding; their entity handling is not changed.
 `make -C backend lint build` passed. No automated suites or media fixtures were
 added or run. Actual libass glyph appearance, invisible-word-joiner handling across
 fonts, NVENC playback and deployed sessions remain unverified.
+
+Library scan metadata selection was reviewed in the scan API, frontend checkbox,
+local metadata reader and metadata-job cascade. Ordinary scans now skip local
+metadata writes for provider-identified items, enqueue missing episodes of already
+identified series and restrict automatic series cascades to missing episodes.
+Automatic jobs also recheck identification at execution, including older queued
+jobs without a mode. Series scheduling follows completed file indexing so new
+series episodes exist before metadata enumeration. Reset keeps locked metadata
+and explicitly refreshes unlocked children of an identified locked series.
+The checkbox now explains ordinary versus reset behavior in English/Vietnamese.
+
+`make -C backend lint build` and `make -C frontend check build` passed. No automated
+suites or fixtures ran. Database job execution, concurrent scan/reset requests,
+TMDB publication and deployed scan timing remain unverified. Provider ID remains
+the identification marker; local-only NFO items without an ID may still reread
+local metadata. Optional missing images do not classify an identified item as
+missing metadata. Explicit reset can coalesce with an already pending/running
+metadata job through the existing queue deduplication; mixed concurrent requests
+have not been verified.
+
+The interrupted Cast visibility change was completed and included in frontend
+checks: unavailable Cast actions remain visible and disabled, with localized
+keyboard/mouse tooltips describing capability or discovery status. Actual browser
+SDK loading, network discovery and receiver playback remain unverified.
+
+Title-group entries now sort by production year ascending regardless of the
+selected catalog order; unknown years sort last, with title/ID tie breakers.
+Group ordering and season/episode numbering retain their existing behavior. The
+catalog sort Select is widened to 210px and does not shrink under toolbar pressure;
+it remains bounded by its container. `make -C frontend check build` passed. No
+automated suites or browser fixtures ran; visual wrapping at actual viewport/font
+sizes remains unverified.
+
+Gemini movie recommendations were implemented with admin-only typed routes,
+available-movie SQL selection, a standalone bounded REST provider client, TMDB
+identity verification, owned-title exclusion and saved admin snapshots. Backend
+contracts were generated through `make -C backend generate` (sqlc then OpenAPI),
+followed by `make -C frontend generate`. `make -C backend lint build` and
+`make -C frontend check build` passed. `git diff --check` passed. No automated
+unit/integration/media/browser suites were added or run, per repository policy.
+The REST request fields were checked against Google's generateContent reference:
+https://ai.google.dev/api/generate-content . The default model is the documented
+stable text-output `gemini-3.5-flash-lite` (July 2026); official model reference:
+https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite .
+
+Live Gemini credentials/model support/quota, generated recommendation relevance,
+TMDB candidate verification at runtime, database snapshot publication, browser
+interaction, rate limiting under concurrent clients and reverse-proxy deadlines
+remain unverified. No live Gemini request or media download was performed. The
+feature requires API configuration and deployment before use. Sampling may miss
+franchise context; provider identity checks do not establish franchise membership
+or the accuracy of generated reasons. Unknown/misidentified catalog titles remain
+a duplicate-detection limitation.

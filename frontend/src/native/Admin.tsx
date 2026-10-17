@@ -38,6 +38,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Tv,
   Users,
@@ -47,6 +48,7 @@ import { useTranslation } from 'react-i18next';
 import { api, result, useAuth, useResource, type DTO } from './api';
 import { Confirm, State, mutate } from './shared';
 import GeneralSettings from './GeneralSettings';
+import Recommendations from './Recommendations';
 import { audioErrorKey } from './audio-errors';
 export default function Admin() {
   const { t } = useTranslation();
@@ -58,6 +60,7 @@ export default function Admin() {
         <nav className="settings-nav">
           {[
             [Settings2, 'general', 'general.title'],
+            [Sparkles, 'recommendations', 'ai.title'],
             [FolderCog, 'libraries', 'manage.librarySettings'],
             [Users, 'users', 'users'],
             [Cpu, 'encoding', 'manage.transcoding'],
@@ -78,6 +81,8 @@ export default function Admin() {
         >
           {tab === 'general' ? (
             <GeneralSettings />
+          ) : tab === 'recommendations' ? (
+            <Recommendations />
           ) : tab === 'users' ? (
             <UsersPanel />
           ) : tab === 'encoding' ? (

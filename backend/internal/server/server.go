@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -24,11 +25,12 @@ import (
 )
 
 type Server struct {
-	Config config.Config
-	Pool   *pgxpool.Pool
-	DB     *store.Queries
-	App    *fiber.App
-	Routes *route.Registry
+	recommendationsMu sync.Mutex
+	Config            config.Config
+	Pool              *pgxpool.Pool
+	DB                *store.Queries
+	App               *fiber.App
+	Routes            *route.Registry
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool) *Server {
@@ -60,10 +62,11 @@ func New(cfg config.Config, pool *pgxpool.Pool) *Server {
 		return c.Next()
 	})
 	app.Use("/api/v1/auth", limiter.New(limiter.Config{Max: 20, Expiration: time.Minute}))
-	s := &Server{cfg, pool, nil, app, route.New(app)}
+	s := &Server{Config: cfg, Pool: pool, App: app, Routes: route.New(app)}
 	if pool != nil {
 		s.DB = store.New(pool)
 	}
+	app.Use("/api/v1/admin/recommendations", limiter.New(limiter.Config{Max: 3, Expiration: time.Minute, Next: func(c fiber.Ctx) bool { return c.Method() != "POST" }}))
 	s.Routes.Auth = s.authenticate
 	s.register()
 	s.Routes.Docs()

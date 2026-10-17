@@ -39,7 +39,7 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 	seen := map[string]bool{}
 	roots := map[string]string{}
 	paths := []string{}
-	updatedShows := map[string]bool{}
+	showMetadataPaths := map[string]string{}
 	if e = report(0, 0); e != nil {
 		return e
 	}
@@ -159,14 +159,11 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 					return e
 				}
 			}
-			if parentID != "" && !updatedShows[parentID] {
+			if parentID != "" && showMetadataPaths[parentID] == "" {
 				if showRoot == "" {
 					showRoot = filepath.Dir(real)
 				}
-				if err := w.localMetadata(ctx, parentID, filepath.Join(showRoot, "tvshow.mkv"), options.ForceMetadata); err != nil {
-					return err
-				}
-				updatedShows[parentID] = true
+				showMetadataPaths[parentID] = filepath.Join(showRoot, "tvshow.mkv")
 			}
 			return w.localMetadata(ctx, itemID, real, options.ForceMetadata)
 		}()
@@ -197,6 +194,26 @@ func (w *Worker) scan(ctx context.Context, id string, options ScanOptions, repor
 	if e = w.DB.DeleteEmptySeries(ctx, id); e != nil {
 		return e
 	}
+	// Publish series metadata jobs only after all episodes have been indexed.
+	// A worker may claim them immediately and enumerate the series' episodes.
+	for showID, path := range showMetadataPaths {
+		if options.ForceMetadata {
+			show, err := w.DB.GetItem(ctx, showID)
+			if err != nil {
+				return err
+			}
+			if show.MetadataLocked && show.ProviderID != "" {
+				// Preserve the locked series but still refresh unlocked episodes.
+				if e = w.scheduleEpisodeMetadata(ctx, showID, false, ""); e != nil {
+					return e
+				}
+				continue
+			}
+		}
+		if e = w.localMetadata(ctx, showID, path, options.ForceMetadata); e != nil {
+			return e
+		}
+	}
 	return w.DB.ScannedLibrary(ctx, id)
 }
 
@@ -217,6 +234,10 @@ func (w *Worker) localMetadata(ctx context.Context, id, path string, force bool)
 	i, e := w.DB.GetItem(ctx, id)
 	if e != nil || i.MetadataLocked {
 		return e
+	}
+	// Normal scans preserve identified metadata, including local artwork/NFO.
+	if !force && i.ProviderID != "" {
+		return nil
 	}
 	n := nfo{}
 	for _, p := range []string{strings.TrimSuffix(path, filepath.Ext(path)) + ".nfo", filepath.Join(filepath.Dir(path), "movie.nfo")} {
@@ -295,7 +316,23 @@ func (w *Worker) localMetadata(ctx context.Context, id, path string, force bool)
 	if e != nil {
 		return e
 	}
-	if w.Config.TMDBToken != "" && (i.Kind == "movie" || i.Kind == "series") && (force || i.ProviderID == "") {
+	if w.Config.TMDBToken != "" && (force || i.ProviderID == "") {
+		if i.Kind == "episode" {
+			// Forced scans refresh episodes through the series job after indexing.
+			if force {
+				return nil
+			}
+			parent, err := w.DB.GetItem(ctx, i.ParentID)
+			if err != nil {
+				return err
+			}
+			if parent.ProviderID == "" {
+				// The new/unidentified series job will populate missing episodes.
+				return nil
+			}
+		} else if i.Kind != "movie" && i.Kind != "series" {
+			return nil
+		}
 		general, err := settings.Load(ctx, w.DB)
 		if err != nil {
 			return err
@@ -303,9 +340,14 @@ func (w *Worker) localMetadata(ctx context.Context, id, path string, force bool)
 		if !force && !general.AutoMetadata {
 			return nil
 		}
+		mode := ""
+		if !force {
+			mode = "scan"
+		}
 		payload, _ := json.Marshal(struct {
-			Automatic bool `json:"automatic"`
-		}{!force})
+			Automatic bool   `json:"automatic"`
+			Mode      string `json:"mode,omitempty"`
+		}{!force, mode})
 		_, e = w.DB.Enqueue(ctx, store.EnqueueParams{ID: uuid.NewString(), Role: "scanner", Kind: "metadata", ResourceID: id, Payload: payload})
 	}
 	return e
@@ -351,6 +393,13 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 		return e
 	}
 	if payload.Automatic && !general.AutoMetadata {
+		return nil
+	}
+	if (payload.Mode == "scan" || payload.Automatic) && i.ProviderID != "" {
+		// A queued scan job must not refresh metadata filled by another job.
+		if i.Kind == "series" {
+			return w.scheduleEpisodeMetadata(ctx, i.ID, payload.Automatic, "missing")
+		}
 		return nil
 	}
 	if payload.Mode == "missing" {
@@ -504,7 +553,11 @@ func (w *Worker) metadata(ctx context.Context, j store.Job) error {
 	if e != nil || i.Kind != "series" {
 		return e
 	}
-	return w.scheduleEpisodeMetadata(ctx, i.ID, payload.Automatic, payload.Mode)
+	mode := payload.Mode
+	if mode == "scan" || payload.Automatic {
+		mode = "missing"
+	}
+	return w.scheduleEpisodeMetadata(ctx, i.ID, payload.Automatic, mode)
 }
 
 func (w *Worker) scheduleEpisodeMetadata(ctx context.Context, seriesID string, automatic bool, mode string) error {

@@ -501,7 +501,11 @@ item created_at descending. SQL sorts before LIMIT, with title/ID tie breakers.
 Cursor fingerprints bind sort and filters to the requesting account; watching
 rank and sort timestamp preserve the page boundary. Resume keeps its existing
 updated-time order, and episode season views retain episode order. Title grouping
-keeps server order for Watching first/Recently added. Sort selection is in the URL
+keeps server group order for Watching first/Recently added, while entries within
+each group always sort by production year ascending (unknown years last), then
+localized title and ID. Title A–Z orders the groups alphabetically. The catalog
+sort selector keeps a 210px width, bounded by its container, including narrow
+layouts so selected labels have enough space. Sort selection is in the URL
 and query key, resetting pagination on change.
 
 
@@ -673,3 +677,60 @@ families present in Debian's TTC collections.
 
 Smaller individual compressed blobs reduce upload duration and retry costs, but
 cannot establish the cause of a registry/proxy timeout without push logs.
+
+Video library scans preserve identified metadata (a nonempty provider ID) unless
+`forceMetadata` is selected. This check happens before local NFO/artwork writes.
+Missing episodes of identified series enqueue their own automatic scan-mode jobs;
+series jobs are enqueued after episode indexing and availability reconciliation.
+Scan-mode jobs recheck identification at execution and cascade only to missing
+episodes. Explicit reset and explicit full metadata refresh cascade to all
+unlocked episodes, including children of an identified locked series on reset.
+Original metadata locks and Auto metadata gating remain in effect. Identification
+is distinct from artwork completeness: missing optional portraits/posters do not
+trigger full metadata retrieval on an ordinary scan. Unidentified local-only
+items without provider IDs may reread their NFO/artwork during ordinary scans.
+
+The Cast action remains visible when unavailable, with disabled controls and
+English/Vietnamese tooltips explaining HTTPS/browser support, SDK loading/failure
+or missing receiver discovery. Receiver controls remain capability-gated.
+
+## Optional Gemini movie recommendations
+
+Admin-only typed GET/POST `/admin/recommendations` routes expose configuration
+presence and the latest saved snapshot, and request fresh movie suggestions.
+`GEMINI_API_KEY` and `GEMINI_MODEL` use the existing local Viper configuration;
+`TMDB_TOKEN` is required for identity verification. Keys never enter DTOs, database
+snapshots, URLs or frontend storage. The API calls the Gemini REST `generateContent`
+endpoint with the key in `x-goog-api-key`; the fixed HTTPS origin refuses redirects.
+The provider module has no Fiber or database dependencies. Request content is
+limited to title/year catalog data and explicit preferences, excluding viewing
+state and paths. Gemini is optional and unrelated to scan/metadata publication.
+
+`RecommendationMovies` selects available movie titles/years/provider IDs, capped
+at 10,001 rows to detect overflow. Catalogs above 10,000 rows are rejected; after
+provider-ID/title-year deduplication, a deterministic spread of at most 1,000
+movies becomes model context. All selected rows are retained for exclusion.
+The prompt treats metadata/preferences as untrusted data and requests mixed,
+missing-installment or discovery recommendations. Structured JSON schema output
+is bounded to 10 suggestions and 8,192 output tokens; response reading is capped
+at 1 MiB, with a 60-second network timeout and 110-second end-to-end deadline.
+Incomplete/blocked/malformed provider responses fail without publishing partial
+snapshots. The model can return no suggestions.
+
+Each accepted candidate must name at least one related context title, pass the
+existing TMDB conservative match/year thresholds, have a known release date no
+later than now, and be absent from the catalog by provider ID or normalized
+localized/original title and year. Existing unknown-year title matches also
+exclude a candidate. Identity verification does not verify an AI's franchise-gap
+claim or recommendation rationale. Local items without a reliable title/provider
+ID may evade exclusion. The catalog is reread after external calls and on saved
+snapshot reads. No filesystem writes, downloader jobs or metadata updates occur.
+
+The `movie-recommendations` settings row stores the latest successful shared
+admin snapshot, its language/focus, catalog/sample counts and generation timestamp.
+Entered preferences and provider keys are not persisted. Generation has a per-API
+try-lock and a three-POST/minute IP limiter; the ordinary admin authorization still
+applies. Provider failures use sanitized errors and preserve the previous result.
+The frontend displays EN/VI capability/configuration states, preferences, reasons,
+related library titles, sample/snapshot information, empty/error states and fixed
+TMDB links. It discloses the Google data transfer and quota use before submission.

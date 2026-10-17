@@ -383,14 +383,18 @@ Catalog sorting offers **Watching first** (the default for video browsing),
 **Title A–Z**, and **Recently added**. Watching first prioritizes your unfinished
 movies by latest viewing-state update, followed by remaining movies alphabetically.
 Sorting is applied before pagination and is stored in the page URL. Title grouping
-preserves the chosen order.
+keeps the chosen order of groups; titles within each group sort by production year
+ascending, then title and ID. Unknown years appear last. The sort selector has
+extra width for English/Vietnamese labels.
 
 
 ### Chromecast
 
-Video and audio players offer **Cast** when Google Cast SDK detects a receiver in
-supported Chromium browsers on a secure origin (HTTPS, or localhost for sender
-development). Select a device to transfer the current item and position. Receiver
+Video and audio players display **Cast** in their controls. The action is disabled
+with an explanatory tooltip until Google Cast detects a receiver in a supported
+Chromium browser on a secure origin (HTTPS, or localhost for sender development).
+The tooltip distinguishes insecure origins, unsupported browsers, SDK loading or
+failure, and no detected receivers. Select a device to transfer the current item and position. Receiver
 controls provide pause/play, seek and volume; progress is saved to the current
 account. Disconnecting returns playback to the local player at its latest position.
 Episodes and audio queue changes retain the selected receiver while its Cast
@@ -497,3 +501,55 @@ adds Noto Serif/Mono, DejaVu and Liberation families; bitmap subtitles retain th
 original appearance. Rebuild the backend image to install the additional fonts,
 and deploy API/scanner/transcoder/frontend together. No database migration is
 needed for these changes. Native deployments must install matching font families.
+
+Library video scans always discover files and reconcile availability, reusing
+unchanged probes. Without **Reset metadata**, items with an existing provider ID
+keep their metadata and artwork; unmatched movies/series and missing episodes of
+identified series are eligible for automatic metadata jobs. New series jobs fill
+only missing episodes. Reset rereads local metadata and refreshes configured TMDB
+metadata for the library, including unlocked episodes; metadata locks are preserved.
+Automatic retrieval still follows the Auto metadata setting.
+
+### Gemini movie suggestions
+
+Open **Admin → AI movie suggestions** (`/admin/recommendations`) to request up to
+10 films related to your existing movie collection. Choose missing franchise
+installments, similar films, or both, and optionally describe your preferences.
+Reasons follow the current English/Vietnamese interface language; each result
+includes related titles from your library and a TMDB link. This suggests titles
+to acquire; it does not find download sources or start downloads.
+
+Configure the **api** process in `backend/.env` or its container environment:
+
+```dotenv
+GEMINI_API_KEY=your-google-ai-studio-key
+GEMINI_MODEL=gemini-3.5-flash-lite
+TMDB_TOKEN=your-tmdb-read-access-token
+```
+
+Restart/redeploy API after changing configuration. Keys stay on the server and are
+never returned to the frontend. The page shows configuration status and disables
+generation until Gemini and TMDB are configured. The model is configurable; use a
+Gemini model supporting `generateContent` JSON-schema structured output.
+
+Clicking **Generate suggestions** sends movie titles, release years and entered
+preferences to Google Gemini, using your API quota. File paths, media contents,
+credentials and viewing history are excluded. No request is made automatically.
+At most 1,000 distinct available movies are sampled across the sorted collection;
+all available catalog movies are checked for duplicates, with a 10,000-entry cap.
+TV series and audio are outside this first recommendation feature.
+
+The backend verifies recommended identities/years against TMDB, rejects future
+release dates and excludes existing TMDB IDs or matching titles/years. Unidentified
+or differently named local items can still evade duplicate detection; identify
+those items for reliable exclusion. Franchise membership and AI explanations are
+not independently verified. Review before downloading. Fewer than 10 or zero
+results can survive validation; the service does not fill gaps with unchecked
+suggestions. The latest successful result is stored as a shared admin snapshot in
+PostgreSQL; already-added movies are filtered again when the snapshot is read.
+Provider errors leave the previous snapshot intact.
+
+Generation is bounded to one request per API instance at a time and three POSTs
+per minute per sender IP. Gemini has a 60-second timeout; the full request has a
+110-second deadline. Reverse proxies must allow this duration. No background
+scanner/downloader jobs or extra binaries are introduced.

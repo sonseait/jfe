@@ -2444,6 +2444,11 @@ p {
 .browser-toolbar > .mantine-Select-root {
   width: 145px;
 }
+.browser-toolbar > .mantine-Select-root.catalog-sort {
+  width: 210px;
+  max-width: 100%;
+  flex-shrink: 0;
+}
 .browser-toolbar {
   margin-bottom: 0;
 }
@@ -4466,4 +4471,31 @@ body:has(.audio-dock) .app-content {
     width: 39px;
     padding: 0;
   }
+}
+
+.ai-recommendation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+.ai-recommendation-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff03;
+  overflow-wrap: anywhere;
+}
+.ai-recommendation-card h3,
+.ai-recommendation-card p {
+  margin: 0;
+}
+.ai-recommendation-card a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
 }

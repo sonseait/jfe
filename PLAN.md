@@ -147,3 +147,10 @@ Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách 
 
 - Tìm phụ đề OpenSubtitles.com tùy chọn theo phim/tập và ngôn ngữ EN/VI, tải và giải nén qua job scanner vào kho phụ đề cá nhân; không sửa media gốc. Cấu hình credentials phía server, tôn trọng quyền thư viện và hạn mức nhà cung cấp.
 - Bổ sung font phụ đề text và ghi nhớ lựa chọn phát theo tài khoản/file phim trên cùng trình duyệt; timing cá nhân tiếp tục lưu phía server.
+
+## Gợi ý phim bằng Gemini trong Admin
+
+- Tích hợp Gemini tùy chọn, chỉ admin sử dụng, dựa trên collection phim hiện có để gợi ý phim nên bổ sung.
+- Ưu tiên phần phim còn thiếu, khám phá phim tương tự hoặc kết hợp; cho phép nhập sở thích và hiển thị lý do EN/VI.
+- Kiểm tra danh tính phim với TMDB, loại phim đã có; gợi ý chỉ mang tính tham khảo, không tự động tải phim.
+- Giữ API key ở backend; chỉ gửi tên/năm phim và sở thích khi admin yêu cầu. Lưu kết quả gần nhất để xem lại.

@@ -421,6 +421,7 @@ export function Catalog({
               />
             )}
             <Select
+              className="catalog-sort"
               aria-label={t('sort')}
               value={sort}
               allowDeselect={false}

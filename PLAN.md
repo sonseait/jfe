@@ -1,0 +1,160 @@
+# Backend JFE: bốn binary, typed routes và OpenAPI tự sinh
+
+## 1. Scope bản đầu
+
+Giữ các quyết định đã chốt:
+
+- API riêng, không duy trì tương thích Jellyfin trong bản đầu.
+- Phim/series: users, libraries, scan, metadata local + TMDB, tìm kiếm/infinite scroll, favorites, watched, resume và next episode.
+- Direct play, remux, HLS NVIDIA NVENC, audio/subtitle selection và lưu tiến độ xem. Chỉ hai chế độ video: NVIDIA hoặc tắt chuyển mã (mặc định); không fallback encode video bằng CPU.
+- User độc lập, vai trò admin/user và quyền truy cập thư viện.
+- Player chỉnh timing phụ đề bằng slider, lưu riêng theo user/file/track trong PostgreSQL; có thể trở về timing mặc định từ file, không ghi nguồn.
+- Bốn process chạy cùng máy, chung PostgreSQL và filesystem volumes.
+- Chưa gồm household profiles, GPU khác NVIDIA, plugin runtime, Redis, S3 hoặc cluster.
+
+Frontend giữ thiết kế hiện tại; những chức năng ngoài scope được ẩn theo capabilities backend.
+
+## 2. Monorepo và bốn binary
+
+Chuyển toàn bộ source, assets, package/lockfile và cấu hình frontend vào `frontend/`. Backend và frontend có Makefile riêng trong từng thư mục; root giữ hướng dẫn toàn project và `AGENTS.md`.
+
+Backend dùng **Go, Fiber v3, pgx/v5, sqlc, PostgreSQL và rs/zerolog**, có đúng bốn binary:
+
+| Binary | Trách nhiệm |
+|---|---|
+| `api` | HTTP API, auth/authorization, catalog, cấu hình, tạo job/playback session, phục vụ ảnh/phụ đề/direct stream/HLS |
+| `scanner` | Scan filesystem, ffprobe, nhận diện phim/episode, metadata local/TMDB, artwork và lịch scan |
+| `downloader` | Xem trước/tải YouTube, quản lý nguồn và lịch đồng bộ audio |
+| `transcoder` | FFmpeg remux/transcode, chuẩn bị phụ đề phục vụ playback, quản lý tiến trình và dọn tài nguyên phiên phát |
+
+- Dùng tên `scanner` trong thư mục, binary và Compose.
+- Migration dùng trực tiếp golang-migrate CLI (image chính thức trong Compose); không nhúng migration runner vào API. Export OpenAPI qua `api openapi`. Project chỉ build bốn binary ứng dụng.
+- Ba worker claim loại job tương ứng từ PostgreSQL bằng transaction ngắn, `SKIP LOCKED`, lease và heartbeat.
+- Scan/metadata có retry giới hạn và chạy lại an toàn. Playback gắn với phiên, hỗ trợ cancellation; worker chết phải khiến phiên báo lỗi có thể phục hồi từ tiến độ đã lưu.
+- API/transcoder mount video chỉ đọc; scanner được ghi thư mục video khi bật chỉnh sửa phụ đề gốc, và được ghi thư viện audio để sửa tag. Kho import riêng cho scanner/downloader ghi, API/transcoder chỉ đọc; artwork và playback cache có volume ghi riêng. API phục vụ file, không chạy FFmpeg trong request handler.
+- Mặc định mỗi loại worker có một instance; giới hạn concurrency cấu hình riêng.
+
+Tái sử dụng có chọn lọc logic của Silo về naming, probing, scan và playback. Viết mới transport, schema, sqlc repositories và bootstrap; không copy nguyên kiến trúc Silo. Giữ attribution/AGPL cho backend phái sinh, không lấy branding Silo.
+
+## 3. Route wrapper là nguồn sinh OpenAPI
+
+Tạo package đăng ký route tập trung, với hình thức:
+
+```go
+Register[RequestDTO, QueryDTO, ParamsDTO, ResponseDTO](
+    router,
+    operation,
+    handler,
+)
+```
+
+`operation` khai báo method, Fiber path, operation ID, summary, tags, yêu cầu auth/quyền và các response status/content type.
+
+Mỗi lần đăng ký đồng thời:
+
+1. Đăng ký handler và middleware vào Fiber v3.
+2. Bind/validate request body, query và path params theo DTO.
+3. Thêm operation cùng schemas vào tài liệu OpenAPI 3.1.
+4. Kiểm tra operation ID, route và path params không trùng hoặc lệch khai báo.
+
+Quy ước bắt buộc:
+
+- Mỗi endpoint có DTO rõ ràng cho **request body, query, path params và response**. Phần không sử dụng dùng kiểu `Empty`; GET không bị sinh request body giả.
+- Không dùng `map[string]any`, database row hoặc sqlc-generated model làm public DTO.
+- Wrapper chuyển Fiber path như `:id` thành OpenAPI `{id}`; không khai báo hai đường dẫn độc lập.
+- Constraints trên DTO là nguồn chung cho runtime validation và schema: required, enum, độ dài và khoảng giá trị.
+- Handler nhận input đã bind và request context; trả response DTO hoặc lỗi chuẩn hóa. Services không phụ thuộc Fiber.
+- Các route streaming dùng response descriptor riêng cho binary body, content type, headers và các status như `200`, `206`, `416`; không bọc stream thành JSON.
+- Auth metadata được dùng cả để gắn middleware thực tế và sinh OpenAPI security requirements.
+- Toàn bộ product API đi qua wrapper. Static assets và trang hiển thị docs là các ngoại lệ hạ tầng.
+
+Các hàm Get/Post/Put/Patch/Delete wrap trực tiếp Fiber; không dùng Huma. Sinh schema bằng invopop/jsonschema và validate bằng santhosh-tekuri/jsonschema từ cùng DTO tags. Export OpenAPI phải chạy được không cần database, worker hoặc FFmpeg. Config/env dùng Viper.
+
+Cung cấp `/openapi.json` và `/docs`. CI sinh lại contracts và kiểm tra artifacts không lệch source.
+
+## 4. API và frontend phải đi cùng nhau
+
+**Một API chưa hoàn thành nếu frontend tương ứng chưa được cập nhật.** Áp dụng cho cả endpoint mới và thay đổi contract.
+
+- Sinh TypeScript types từ OpenAPI, dùng typed API client chung cho frontend.
+- Mỗi lát cắt tính năng gồm: migration/query → service → typed route/docs → frontend hook/screen.
+- Thay đổi DTO phải cập nhật generated types, API calls, trạng thái loading/error/empty trong cùng thay đổi.
+- Với API hạ tầng không có màn hình riêng, tích hợp vào luồng sử dụng tương ứng; không tạo trang giả chỉ để đánh dấu hoàn thành.
+- Bỏ dần Jellyfin SDK/contracts khi chuyển từng luồng. Kết thúc bản đầu, mọi tính năng đang hiển thị phải chạy với backend mới.
+- Backend cung cấp capabilities thực tế; frontend không hiển thị thao tác chưa được hỗ trợ.
+
+Hợp đồng chính:
+
+- REST `/api/v1`; nhóm system/setup, auth/users, libraries/jobs, catalog/metadata, user-state, playback và admin.
+- Catalog trả `items`, `nextCursor`, `hasMore`; dùng thứ tự ổn định và cursor gắn với bộ lọc.
+- Opaque bearer sessions, lưu hash phía server; stream token ngắn hạn gắn với playback session.
+- Playback start trả phương thức, trạng thái chuẩn bị, URL và tracks; progress có sequence, stop idempotent.
+- PostgreSQL schema mới tách catalog item/media file; không import database Silo/Jellyfin.
+- TMDB tùy chọn; scan local vẫn hoạt động khi chưa cấu hình token.
+
+## 5. Thứ tự triển khai và nghiệm thu
+
+1. **Cấu trúc repo và contract foundation:** chuyển frontend, tạo bốn binary, pgx/sqlc/migrations, route wrapper/OpenAPI, typed client và Compose.
+2. **Setup/auth/users:** triển khai đầy đủ backend và frontend; auth, session revocation và library authorization.
+3. **Libraries/scanner/catalog:** scan jobs, ffprobe, metadata/artwork, tìm kiếm và infinite scroll; frontend quản lý thư viện và theo dõi jobs.
+4. **Playback/transcoder:** direct play trước, sau đó remux/HLS NVIDIA NVENC, audio/phụ đề, resume, cancellation và cleanup; nối player hiện tại.
+5. **Admin và ổn định:** cấu hình NVIDIA NVENC hoặc tắt chuyển mã, worker status, lịch scan, metadata editor cơ bản, capabilities và tài liệu vận hành.
+
+Theo yêu cầu ngày 2026-10-05, loại bỏ toàn bộ automated testing (unit, integration, media fixtures và E2E).
+Giữ build, lint và sinh OpenAPI/frontend types; CI thất bại nếu generated artifacts chưa được cập nhật.
+Runtime validation, phân quyền, lease/recovery và an toàn file vẫn là yêu cầu sản phẩm.
+
+Cập nhật `AGENTS.md` ngay từ mốc đầu với cấu trúc mới, trách nhiệm bốn binary, quy tắc DTO/route wrapper, sqlc, generated artifacts và yêu cầu **API + frontend trong cùng thay đổi**.
+
+
+## 6. Phạm vi audio đã chốt
+
+- Thư viện music, podcasts, audiobooks; nguồn local và YouTube, chưa RSS.
+- Nghệ sĩ/album/bài, chương trình/tập, sách/phần/chapter; nhạc có queue,
+  shuffle/repeat; audio dài có resume, tốc độ nghe và hẹn giờ ngủ.
+- Mini-player xuyên trang, audio/video không phát đồng thời. Chưa playlist cá nhân
+  hoặc tải offline trên thiết bị.
+- MusicBrainz gợi ý bản phát hành để người dùng chọn; Cover Art Archive tùy chọn.
+  Không phụ thuộc dịch vụ ngoài để quản lý nhạc AI hoặc sửa metadata thủ công.
+- UI sửa tag từng file hoặc nhiều file, ghi trực tiếp xuống file qua job scanner.
+  Giữ tag không sửa, artwork/chapter không thay thế, nội dung audio và ID file/item.
+  Ghi bản tạm, xác minh, thay nguyên tử; fingerprint và journal hỗ trợ xung đột/recovery.
+- Tất cả thư viện audio cấp quyền ghi cho scanner; API/transcoder chỉ đọc.
+  Admin và user có quyền import được sửa mọi file audio trong thư viện được cấp.
+- Ghi tags MP3, FLAC, M4A/M4B, OGG/Opus, WAV, AIFF. AAC thô chỉ quét/phát,
+  UI không cung cấp ghi tag cho định dạng này.
+- Bốn binary api/scanner/transcoder/downloader. Downloader chạy yt-dlp, tải audio
+  codec gốc; FFmpeg remux audio được phép, không encode video bằng CPU.
+- Dán URL YouTube video/playlist/album Music không cần đăng nhập; xem trước,
+  nhập một lần hoặc theo dõi mỗi sáu giờ. Không tìm kiếm YouTube, cookie hay channel.
+- Mỗi video là một mục; giữ chapter có sẵn, không tự tách full album.
+- Đồng bộ chỉ bổ sung, không xóa/ghi đè nội dung hoặc tag đã chỉnh. Ngừng theo dõi,
+  xóa nguồn/thư viện không xóa file. Kho chung không quota từng user.
+- Mặc định một job download đồng thời và ngưỡng 5 GiB trống, admin cấu hình được.
+  Dùng staging, chống trùng video trong thư viện, lease/retry/backoff và kiểm tra
+  quyền lúc thực thi. Downloader không dùng thư viện video làm đích nhập.
+- Audio direct play hoặc HLS AAC do transcoder xử lý, hoạt động khi chế độ video
+  disabled. Tái sử dụng token playback, Range và progress ordering hiện có.
+- Mỗi thay đổi API đi cùng frontend EN/VI trong cùng thay đổi.
+
+
+## Công cụ phụ đề theo phim lẻ/tập phim
+
+- Editor có preview video, thanh seek, danh sách thời gian/text và offset toàn bộ track; không sửa từng câu. Preview ưu tiên direct/remux, chỉ encode video bằng NVIDIA khi cần, preview tối đa 720p/2 Mbps để phản hồi nhanh.
+- Admin và người có quyền import trong thư viện được sync/xóa nguồn phụ đề dùng chung. Scanner sửa timestamp UTF-8 SRT/VTT/ASS/SSA rời hoặc remux track text MKV, không encode video/audio.
+- Cho phép xóa track nhúng MKV (kể cả PGS/DVD), file phụ đề rời và upload cá nhân của chủ sở hữu. Xóa track dùng để burn-in khi phát; không xử lý chữ đã encode vào hình ảnh video.
+- Bật qua `JFE_SUBTITLE_EDITING`, mặc định tắt. API/transcoder chỉ đọc; scanner có quyền ghi có chủ đích. Xác nhận thao tác ghi đè/xóa; khóa file, kiểm tra fingerprint, journal phục hồi, thay thế atomic và không giữ backup sau khi hoàn tất. Chặn chỉnh sửa khi file đang được phát.
+
+- Tìm phụ đề OpenSubtitles.com tùy chọn theo phim/tập và ngôn ngữ EN/VI, tải và giải nén qua job scanner vào kho phụ đề cá nhân; không sửa media gốc. Cấu hình credentials phía server, tôn trọng quyền thư viện và hạn mức nhà cung cấp.
+- Tự động bổ sung phụ đề tiếng Việt thiếu theo từng thư viện phim/series, gồm nội dung cũ và mới: tìm sau scan và mỗi 24 giờ. Track nhúng hoặc sidecar tiếng Việt, kể cả phụ đề hình ảnh, được tính là đã đủ; không tự nâng cấp hoặc thay thế phụ đề hiện có.
+- Scanner lưu `<tên-video>.vi.srt` cạnh video khi bật `JFE_SUBTITLE_DOWNLOADS` và chính sách thư viện. API/transcoder giữ mount chỉ đọc. Xuất bản nguyên tử không ghi đè, khóa/fingerprint/lease và journal phục hồi; không sửa hoặc encode video/audio, không reset timing track cũ.
+- Tìm phụ đề theo tên và năm đã lưu trong metadata; ưu tiên title tiếng Anh từ TMDB nếu có. Series dùng tên series và số mùa/tập. Loại phần chữ Trung Quốc khỏi tên file trộn Trung/Latin khi tìm metadata hoặc cần fallback tên file; không đổi tên file gốc. Không yêu cầu hash, nguồn phát hành, release group hoặc TMDB ID để chấp nhận; từ chối năm/định danh/số tập mâu thuẫn. Thử tối đa 3 ứng viên mỗi lượt chạy nếu file tải về không hợp lệ, trong giới hạn thời gian và quota.
+- API key và tài khoản VIP cấu hình qua `.env`/environment server; tự đăng nhập lại khi không đặt token tường minh. PostgreSQL điều phối truy cập/hạn mức chung cho tải thủ công và tự động. Admin xem kết nối/VIP/quota, bật theo thư viện, xem trạng thái phân trang và yêu cầu tìm ngay; giao diện EN/VI, không phụ thuộc chế độ NVIDIA để tải.
+- Bổ sung font phụ đề text và ghi nhớ lựa chọn phát theo tài khoản/file phim trên cùng trình duyệt; timing cá nhân tiếp tục lưu phía server.
+
+## Gợi ý phim bằng Gemini trong Admin
+
+- Tích hợp Gemini tùy chọn, chỉ admin sử dụng, dựa trên collection phim hiện có để gợi ý phim nên bổ sung.
+- Ưu tiên phần phim còn thiếu, khám phá phim tương tự hoặc kết hợp; cho phép nhập sở thích và hiển thị lý do EN/VI.
+- Kiểm tra danh tính phim với TMDB, loại phim đã có; gợi ý chỉ mang tính tham khảo, không tự động tải phim.
+- Giữ API key ở backend; chỉ gửi tên/năm phim và sở thích khi admin yêu cầu. Lưu kết quả gần nhất để xem lại.

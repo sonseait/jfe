@@ -1,0 +1,546 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
+	"jfe/backend/internal/audio"
+	"jfe/backend/internal/media"
+	"jfe/backend/internal/store"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+var errPlaybackStopped = errors.New("playback stopped")
+
+// An EVENT playlist needs media ahead of the first segment so the player does not stall at its edge.
+func hlsHasInitialBuffer(dir string) bool {
+	playlist, err := os.ReadFile(filepath.Join(dir, "index.m3u8"))
+	if err != nil {
+		return false
+	}
+	segments := 0
+	for _, line := range strings.Split(string(playlist), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, line)); err == nil {
+			segments++
+		}
+	}
+	return segments >= 2
+}
+
+func (w *Worker) transcode(ctx context.Context, j store.Job) (result error) {
+	jobStage(ctx, "prepare_playback")
+	p, e := w.DB.GetPlayback(ctx, j.ResourceID)
+	if e != nil {
+		return e
+	}
+	if p.State != "preparing" {
+		if p.State == "stopped" {
+			return errPlaybackStopped
+		}
+		return fmt.Errorf("playback not preparing")
+	}
+	defer func() {
+		if result != nil {
+			c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if errors.Is(result, errPlaybackStopped) {
+				_ = w.DB.StopPlayback(c, store.StopPlaybackParams{ID: p.ID, UserID: p.UserID})
+			} else {
+				_ = w.DB.FailPlayback(c, p.ID)
+			}
+		}
+	}()
+	f, e := w.DB.GetFile(ctx, p.FileID)
+	if e != nil {
+		return e
+	}
+	path, e := audio.Within(w.Config.MediaRoot, w.Config.ImportRoot, f.Path)
+	if e != nil {
+		return e
+	}
+	var b struct {
+		Target                                           string
+		AudioIndex, SubtitleIndex, MaxBitrate, MaxHeight int
+		SubtitleFont                                     string
+		SubtitleID                                       string
+		SubtitleDelay                                    float64
+		Position                                         float64
+		Decision                                         struct {
+			Container   string
+			AudioAction string
+			VideoCodec  string
+		}
+	}
+	if e = json.Unmarshal(j.Payload, &b); e != nil {
+		return e
+	}
+	data, e := w.DB.GetSetting(ctx, "encoding")
+	if e != nil {
+		return e
+	}
+	cfg, e := media.ParseEncoding(data)
+	if e != nil {
+		return e
+	}
+	if b.SubtitleFont != "" {
+		if !media.ValidSubtitleFont(b.SubtitleFont) {
+			return fmt.Errorf("invalid subtitle font")
+		}
+		cfg.SubtitleFont = b.SubtitleFont
+	}
+	if b.Target == "chromecast" {
+		cfg.AudioCodec = "aac"
+	}
+	var probe media.Probe
+	if e = json.Unmarshal(f.Probe, &probe); e != nil {
+		return e
+	}
+	toneMap := ""
+	if p.Method == "transcode" {
+		for _, track := range probe.Streams {
+			if track.Type == "video" && track.Disposition.AttachedPic == 0 {
+				toneMap, e = media.ToneMappingFilter(track)
+				break
+			}
+		}
+		if e != nil {
+			return e
+		}
+		if toneMap != "" {
+			if e = requireToneMappingFilters(ctx); e != nil {
+				return e
+			}
+		}
+	}
+	var videoArgs []string
+	if p.Method == "transcode" {
+		if b.Decision.VideoCodec != "" {
+			cfg.VideoCodec = b.Decision.VideoCodec
+			cfg.AudioCodec = "aac"
+		}
+		videoArgs, e = cfg.VideoArgs(cfg.VideoBitrate(b.MaxHeight, b.MaxBitrate))
+		if e != nil {
+			return e
+		}
+		if toneMap == "" {
+			if e = requireCUDAPlaybackFilters(ctx); e != nil {
+				return e
+			}
+		}
+	}
+	dir := filepath.Join(w.Config.CacheRoot, "playback", p.ID)
+	dir, e = filepath.Abs(dir)
+	if e != nil {
+		return e
+	}
+	if e = os.MkdirAll(dir, 0750); e != nil {
+		return e
+	}
+	defer func() {
+		if result != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y"}
+	if p.Method == "transcode" {
+		inputArgs, err := cfg.CUDAInputArgs()
+		if err != nil {
+			return err
+		}
+		args = append(args, inputArgs...)
+		// NVENC consumes CUDA frames directly, rather than forcing a download.
+		videoArgs[len(videoArgs)-1] = "cuda"
+	}
+	if p.Method == "transcode" {
+		// Cap background generation at the player's maximum 2x speed. An
+		// initial burst keeps two published HLS segments ready without waiting
+		// for wall-clock playback. Remux/direct paths are not rate-limited.
+		args = append(args, playbackReadRateArgs()...)
+	}
+	args = append(args, "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", "0:v:0")
+	audio := "0:a:0?"
+	if b.AudioIndex >= 0 {
+		audio = "0:" + strconv.Itoa(b.AudioIndex)
+	}
+	args = append(args, "-map", audio)
+	if p.Method == "audio" {
+		args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", fmt.Sprintf("%.3f", p.StartPosition), "-i", path, "-map", audio, "-vn", "-c:a", cfg.AudioCodec, "-b:a", strconv.Itoa(cfg.AudioBitrate), "-ac", "2"}
+	} else if p.Method == "remux" {
+		args = append(args, "-c:v", "copy")
+		if b.Decision.AudioAction == "copy" {
+			args = append(args, "-c:a", "copy")
+		} else if b.Target == "chromecast" {
+			args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k")
+		} else {
+			args = append(args, remuxAudioArgs(probe, b.AudioIndex)...)
+		}
+		if b.Decision.Container == "mp4" {
+			args = append(args, "-tag:v", "hvc1")
+			for _, stream := range probe.Streams {
+				if stream.Type == "video" && stream.Codec != "hevc" {
+					args = args[:len(args)-2]
+					break
+				}
+			}
+		}
+	} else {
+		args = append(args, videoArgs...)
+		if b.Target == "chromecast" {
+			// Bound the output independently of source frame rate/encoder defaults.
+			args = append(args, "-r", "30", "-profile:v", "high", "-level:v", "4.1")
+		}
+		args = append(args, "-c:a", cfg.AudioCodec, "-ac", "2", "-b:a", strconv.Itoa(cfg.AudioBitrate))
+		filters := cudaPlaybackFilters(toneMap, b.MaxHeight)
+		if toneMap != "" {
+			args = append(args, media.SDRColorArgs()...)
+			args = append(args, "-filter_threads", "2", "-filter_complex_threads", "2", "-map_metadata", "-1")
+		}
+		bitmap := false
+		if b.SubtitleIndex >= 0 || b.SubtitleID != "" {
+			for _, s := range probe.Streams {
+				if s.Index == b.SubtitleIndex && (s.Codec == "hdmv_pgs_subtitle" || s.Codec == "dvd_subtitle") {
+					bitmap = true
+				}
+			}
+			if bitmap {
+				args = append(args, "-filter_complex", bitmapSubtitleGraph(bitmapBaseFilter(toneMap), b.SubtitleIndex, b.SubtitleDelay, bitmapOutputFilters(cudaPlaybackFilters("", b.MaxHeight))))
+				for n := 0; n < len(args)-1; n++ {
+					if args[n] == "-map" && args[n+1] == "0:v:0" {
+						args[n+1] = "[v]"
+					}
+				}
+				filters = nil
+			} else {
+				subtitlePath, subtitleMap := path, "0:"+strconv.Itoa(b.SubtitleIndex)
+				for _, track := range probe.Streams {
+					if track.Index == b.SubtitleIndex && track.ExternalPath != "" {
+						subtitlePath, e = media.Within(w.Config.MediaRoot, track.ExternalPath)
+						if e != nil {
+							return e
+						}
+						subtitleMap = "0:0"
+					}
+				}
+				if b.SubtitleID != "" {
+					var cueData []byte
+					prepared := false
+					for _, track := range probe.Streams {
+						if track.Type == "subtitle" && track.SubtitleID == b.SubtitleID {
+							root := filepath.Join(w.Config.CacheRoot, "subtitles")
+							cached, err := media.Within(root, filepath.Join(root, track.SubtitleID+".json"))
+							if err != nil {
+								return err
+							}
+							cueData, e = os.ReadFile(cached)
+							if e != nil {
+								return e
+							}
+							prepared = true
+							break
+						}
+					}
+					if !prepared {
+						row, err := w.DB.GetSubtitle(ctx, store.GetSubtitleParams{ID: b.SubtitleID, FileID: p.FileID, UserID: p.UserID})
+						if err != nil {
+							return fmt.Errorf("subtitle unavailable: %w", err)
+						}
+						cueData = row.Cues
+					}
+					var cues []media.Cue
+					if err := json.Unmarshal(cueData, &cues); err != nil {
+						return err
+					}
+					content, err := media.SubtitlesASS(cues)
+					if err != nil {
+						return err
+					}
+					subtitlePath = filepath.Join(dir, "subtitles.ass")
+					if err = os.WriteFile(subtitlePath, []byte(content), 0600); err != nil {
+						return err
+					}
+				}
+				if b.SubtitleID == "" {
+					extract := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", subtitlePath, "-map", subtitleMap, "-c:s", "ass", filepath.Join(dir, "subtitles.ass"))
+					if e = extract.Run(); e != nil {
+						return fmt.Errorf("subtitle extraction failed: %w", e)
+					}
+				}
+				filters = append(filters, "hwdownload", "format=nv12", "format=yuv420p")
+				filters = append(filters, fmt.Sprintf("setpts=PTS%+.3f/TB,subtitles=subtitles.ass:force_style='%s',setpts=PTS-STARTPTS", p.StartPosition-b.SubtitleDelay, cfg.SubtitleStyle()))
+				filters = append(filters, "format=nv12", "hwupload_cuda")
+			}
+		}
+		if len(filters) > 0 {
+			args = append(args, "-vf", strings.Join(filters, ","))
+		}
+		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*4)")
+	}
+	if p.Method == "transcode" {
+		// Machine-readable FPS/speed diagnostics contain no source path.
+		args = append(args, "-stats_period", "1", "-progress", "progress.txt")
+	}
+	remuxMP4 := p.Method == "remux" && b.Decision.Container == "mp4"
+	if remuxMP4 {
+		args = append(args, remuxOutputArgs()...)
+	} else {
+		args = append(args, "-sn", "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "event", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-hls_segment_filename", "segment-%06d.ts", "index.m3u8")
+	}
+	processCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(processCtx, "ffmpeg", args...)
+	cmd.Dir = dir
+	logFile, e := os.OpenFile(filepath.Join(dir, "ffmpeg.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if e != nil {
+		return e
+	}
+	defer logFile.Close()
+	cmd.Stderr = logFile
+	jobStage(ctx, "start_ffmpeg")
+	if e = cmd.Start(); e != nil {
+		return e
+	}
+	log.Ctx(ctx).Info().Int("ffmpegPid", cmd.Process.Pid).Str("playbackMethod", p.Method).Bool("preview", p.Preview).Str("videoCodec", b.Decision.VideoCodec).Str("audioAction", b.Decision.AudioAction).Int("maxHeight", b.MaxHeight).Int("maxBitrate", b.MaxBitrate).Msg("FFmpeg started")
+	jobStage(ctx, "prepare_stream")
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+	ready := false
+	measurementCtx, stopMeasurement := context.WithCancel(ctx)
+	var measured chan struct{}
+	defer func() {
+		defer stopMeasurement()
+		if result != nil {
+			stopMeasurement()
+		}
+		if measured != nil {
+			// A stopped session must release the worker even when FFmpeg finished before ffprobe.
+			for {
+				select {
+				case <-measured:
+					return
+				case <-ctx.Done():
+					stopMeasurement()
+					<-measured
+					return
+				case <-ticker.C:
+					current, err := w.DB.GetPlayback(ctx, p.ID)
+					if err != nil || current.State == "stopped" || current.State == "failed" || current.ExpiresAt.Before(time.Now()) {
+						if result == nil && err == nil && (current.State == "stopped" || current.ExpiresAt.Before(time.Now())) {
+							result = errPlaybackStopped
+						}
+						stopMeasurement()
+						<-measured
+						return
+					}
+				}
+			}
+		}
+	}()
+	markReady := func() error {
+		info := media.StreamInfo{ToneMapped: toneMap != "", VideoTranscoded: p.Method == "transcode", BitrateSource: "pending"}
+		if err := writeStreamInfo(dir, info); err != nil {
+			return err
+		}
+		if err := w.DB.SetPlaybackReady(ctx, p.ID); err != nil {
+			return err
+		}
+		jobStage(ctx, "stream_ready")
+		log.Ctx(ctx).Info().Dur("startupMs", time.Since(j.UpdatedAt)).Msg("playback stream ready")
+		// Playback can begin as soon as the playlist exists; measurements are optional.
+		measured = make(chan struct{})
+		go func() {
+			defer close(measured)
+			samplePath := filepath.Join(dir, "segment-000000.ts")
+			if remuxMP4 {
+				samplePath = filepath.Join(dir, "stream.mp4")
+			}
+			sample, err := media.InspectSegment(measurementCtx, samplePath)
+			if measurementCtx.Err() != nil {
+				return
+			}
+			if err != nil {
+				log.Ctx(ctx).Warn().Err(err).Str("playbackId", p.ID).Msg("Could not measure output stream bitrate")
+				sample.BitrateSource = "unavailable"
+			}
+			sample.VideoTranscoded = info.VideoTranscoded
+			sample.ToneMapped = info.ToneMapped
+			if err := writeStreamInfo(dir, sample); err != nil {
+				log.Ctx(ctx).Warn().Err(err).Str("playbackId", p.ID).Msg("Could not save output stream bitrate")
+			}
+		}()
+		return nil
+	}
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				// Capture the bounded diagnostic before failed-session cleanup removes the log.
+				info, statErr := logFile.Stat()
+				diagnostic := make([]byte, 4096)
+				n := 0
+				if statErr == nil {
+					reader, openErr := os.Open(logFile.Name())
+					if openErr == nil {
+						n, _ = reader.ReadAt(diagnostic, max(0, info.Size()-4096))
+						reader.Close()
+					}
+				}
+				return fmt.Errorf("ffmpeg failed: %w: %s", err, strings.TrimSpace(string(diagnostic[:n])))
+			}
+			if remuxMP4 {
+				if !remuxHasInitialBuffer(dir) {
+					return errors.New("remux produced no complete media fragment")
+				}
+				if e = os.WriteFile(filepath.Join(dir, "complete"), nil, 0600); e != nil {
+					return e
+				}
+			}
+			if !ready {
+				if e = markReady(); e != nil {
+					return e
+				}
+			}
+			return nil
+		case <-ticker.C:
+			current, e := w.DB.GetPlayback(ctx, p.ID)
+			if e != nil || current.State == "stopped" || current.State == "failed" || current.ExpiresAt.Before(time.Now()) {
+				cancel()
+				<-done
+				if e != nil {
+					return fmt.Errorf("read playback state: %w", e)
+				}
+				if current.State == "failed" {
+					return errors.New("playback session failed")
+				}
+				return errPlaybackStopped
+			}
+			if !ready {
+				if (remuxMP4 && remuxHasInitialBuffer(dir)) || (!remuxMP4 && hlsHasInitialBuffer(dir)) {
+					if e = markReady(); e != nil {
+						cancel()
+						<-done
+						return e
+					}
+					ready = true
+				}
+			}
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		}
+	}
+}
+
+func writeStreamInfo(dir string, info media.StreamInfo) error {
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	temp := filepath.Join(dir, "stream-info.json.tmp")
+	if err = os.WriteFile(temp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(temp, filepath.Join(dir, "stream-info.json"))
+}
+
+func remuxAudioArgs(probe media.Probe, index int) []string {
+	codec := ""
+	for _, track := range probe.Streams {
+		if track.Type == "audio" && (index == -1 || track.Index == index) {
+			codec = track.Codec
+			break
+		}
+	}
+	if codec == "" || codec == "aac" {
+		return []string{"-c:a", "copy"}
+	}
+	return []string{"-c:a", "aac", "-ac", "2", "-b:a", "192k"}
+}
+func (w *Worker) cleanup(ctx context.Context) {
+	root := filepath.Join(w.Config.CacheRoot, "playback")
+	entries, e := os.ReadDir(root)
+	if e != nil {
+		if !errors.Is(e, os.ErrNotExist) && ctx.Err() == nil {
+			log.Ctx(ctx).Warn().Err(e).Msg("playback cache listing failed")
+		}
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		p, e := w.DB.GetPlayback(ctx, entry.Name())
+		if e == nil && (p.State == "ready" || p.State == "preparing") {
+			continue
+		}
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			if ctx.Err() == nil {
+				log.Ctx(ctx).Error().Err(e).Str("playbackId", entry.Name()).Msg("playback cleanup lookup failed")
+			}
+			return
+		}
+		if e := os.RemoveAll(filepath.Join(root, entry.Name())); e != nil {
+			log.Ctx(ctx).Warn().Err(e).Str("playbackId", entry.Name()).Msg("playback cache cleanup failed")
+		}
+	}
+}
+
+// Fit inside the chosen resolution without upscaling; H.264 requires even dimensions.
+func resolutionFilter(height int) string {
+	width := height * 16 / 9
+	return fmt.Sprintf("scale=w='min(iw,%d)':h='min(ih,%d)':force_original_aspect_ratio=decrease:force_divisible_by=2", width, height)
+}
+func filterSuffix(filters []string) string {
+	if len(filters) == 0 {
+		return ""
+	}
+	return "," + strings.Join(filters, ",")
+}
+
+func cudaResolutionFilter(height int) string {
+	return strings.Replace(resolutionFilter(height), "scale=", "scale_cuda=", 1)
+}
+
+// Resize HDR CUDA frames at their original bit depth before tone mapping. Only
+// tonemap_cuda converts HDR to eight-bit NV12; early NV12 conversion loses HDR data.
+func cudaPlaybackFilters(toneMap string, height int) []string {
+	if toneMap != "" {
+		if height > 0 {
+			return []string{cudaResolutionFilter(height), toneMap}
+		}
+		return []string{toneMap}
+	}
+	if height > 0 {
+		return []string{cudaResolutionFilter(height) + ":format=nv12"}
+	}
+	return []string{"scale_cuda=format=nv12"}
+}
+
+// Bitmap subtitles keep source coordinates until overlay, then resize on CUDA.
+func bitmapBaseFilter(toneMap string) string {
+	if toneMap == "" {
+		toneMap = "scale_cuda=format=nv12"
+	}
+	return toneMap + ",hwdownload,format=nv12,format=yuv420p"
+}
+func bitmapOutputFilters(filters []string) []string {
+	return append([]string{"format=nv12", "hwupload_cuda"}, filters...)
+}
+
+func playbackReadRateArgs() []string {
+	return []string{"-readrate", "2", "-readrate_initial_burst", "16", "-readrate_catchup", "2.25"}
+}

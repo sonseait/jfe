@@ -1,0 +1,16 @@
+node_modules/
+.vite/
+dist/
+.env*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+/backend/bin/
+/backend/cache/
+/backend/media/
+/cache/
+/media/
+
+/backend/.venv-audio/
+/backend/imports/
+/imports/

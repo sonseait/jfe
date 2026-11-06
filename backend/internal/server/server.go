@@ -1,0 +1,136 @@
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/limiter"
+	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"jfe/backend/internal/config"
+	"jfe/backend/internal/observability"
+	"jfe/backend/internal/route"
+	"jfe/backend/internal/store"
+)
+
+type Server struct {
+	recommendationsMu sync.Mutex
+	Config            config.Config
+	Pool              *pgxpool.Pool
+	DB                *store.Queries
+	App               *fiber.App
+	Routes            *route.Registry
+}
+
+func New(cfg config.Config, pool *pgxpool.Pool) *Server {
+	app := fiber.New(fiber.Config{Immutable: true, BodyLimit: 1 << 20, ErrorHandler: route.ErrorHandler})
+	app.Use(requestid.New())
+	app.Use(func(c fiber.Ctx) error {
+		start := time.Now()
+		logger := log.Logger.With().Str("requestId", c.GetRespHeader("X-Request-ID")).Str("method", c.Method()).Logger()
+		c.SetContext(logger.WithContext(c.Context()))
+		err := c.Next()
+		if err != nil {
+			err = route.ErrorHandler(c, err)
+		}
+		status := c.Response().StatusCode()
+		level := zerolog.InfoLevel
+		if status >= 500 {
+			level = zerolog.ErrorLevel
+		} else if status >= 400 {
+			level = zerolog.WarnLevel
+		} else if route.PollingRequest(c) {
+			level = zerolog.DebugLevel
+		}
+		event := log.Ctx(c.Context()).WithLevel(level).Str("route", c.Route().Path).Int("status", status).Dur("durationMs", time.Since(start))
+		if requestErr := route.RequestError(c); requestErr != nil {
+			event = observability.Error(event, requestErr)
+		}
+		event.Msg("http request completed")
+		return err
+	})
+	app.Use(recover.New())
+	// Receivers fetch bearer-scoped media URLs cross-origin. Keep CORS scoped
+	// to streams; account APIs still require same-origin authenticated requests.
+	app.Use(func(c fiber.Ctx) error {
+		path := c.Path()
+		if strings.HasPrefix(path, "/api/v1/playback/") && strings.Contains(path, "/stream/") {
+			c.Set("Access-Control-Allow-Origin", "*")
+			c.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			c.Set("Access-Control-Allow-Headers", "Range")
+			c.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+			if c.Method() == "OPTIONS" {
+				return c.SendStatus(fiber.StatusNoContent)
+			}
+		}
+		return c.Next()
+	})
+	app.Use("/api/v1/auth", limiter.New(limiter.Config{Max: 20, Expiration: time.Minute}))
+	s := &Server{Config: cfg, Pool: pool, App: app, Routes: route.New(app)}
+	if pool != nil {
+		s.DB = store.New(pool)
+	}
+	app.Use("/api/v1/admin/recommendations", limiter.New(limiter.Config{Max: 3, Expiration: time.Minute, Next: func(c fiber.Ctx) bool { return c.Method() != "POST" }}))
+	s.Routes.Auth = s.authenticate
+	s.register()
+	s.Routes.Docs()
+	return s
+}
+func (s *Server) authenticate(ctx context.Context, token string) (route.Principal, error) {
+	if s.DB == nil {
+		return route.Principal{}, route.Fail(503, "Database unavailable")
+	}
+	u, err := s.DB.Authenticate(ctx, hash(token))
+	if err != nil {
+		return route.Principal{}, route.Fail(401, "Authentication required")
+	}
+	return route.Principal{ID: u.ID, Role: u.Role}, nil
+}
+func hash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+func token() string {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b[:])
+}
+func dbError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return route.Fail(404, "Not found")
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" {
+		return route.Fail(409, "Already exists")
+	}
+	return err
+}
+func out[T any](v T, err error) (route.Output[T], error) {
+	return route.Output[T]{Body: v}, dbError(err)
+}
+func op(path, id, access string) route.Operation {
+	return route.Operation{Path: "/api/v1" + path, ID: id, Summary: id, Access: access, Tag: "jfe"}
+}
+func (s *Server) access(ctx context.Context, libraryID string) error {
+	p := route.User(ctx)
+	ok, err := s.DB.CanAccess(ctx, store.CanAccessParams{ID: libraryID, UserID: p.ID, Column3: p.Role == "admin"})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return route.Fail(http.StatusForbidden, "Library access denied")
+	}
+	return nil
+}

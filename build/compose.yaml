@@ -1,0 +1,16 @@
+name: jfe-build
+
+# Image build/publish definitions only; deployment owns databases, migrations,
+# worker commands, environment, networks and shared media/cache mounts.
+services:
+  backend:
+    image: ecr.swissy.shop/c/jfe-be:latest
+    platform: linux/amd64
+    build:
+      context: ../backend
+
+  frontend:
+    image: ecr.swissy.shop/c/jfe-fe:latest
+    platform: linux/amd64
+    build:
+      context: ../frontend
